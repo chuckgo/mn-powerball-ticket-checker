@@ -351,7 +351,32 @@ function showImageQualityWarning(issues, confidence) {
     }
 }
 
-function preprocessImage(imageElement) {
+function rotateImage(imageElement, degrees) {
+    // Rotate image by specified degrees (0, 90, 180, 270)
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const width = imageElement.naturalWidth || imageElement.width;
+    const height = imageElement.naturalHeight || imageElement.height;
+
+    // Set canvas size based on rotation
+    if (degrees === 90 || degrees === 270) {
+        canvas.width = height;
+        canvas.height = width;
+    } else {
+        canvas.width = width;
+        canvas.height = height;
+    }
+
+    // Apply rotation
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((degrees * Math.PI) / 180);
+    ctx.drawImage(imageElement, -width / 2, -height / 2);
+
+    return canvas.toDataURL();
+}
+
+function preprocessImage(imageElement, mode = 'default') {
     // Create canvas for image preprocessing
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -363,27 +388,70 @@ function preprocessImage(imageElement) {
     // Draw original image
     ctx.drawImage(imageElement, 0, 0);
 
+    if (mode === 'none') {
+        // No preprocessing - return original
+        return canvas.toDataURL();
+    }
+
     // Get image data
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
 
-    // Apply preprocessing:
-    // 1. Increase contrast
-    // 2. Sharpen
-    const contrast = 1.5;
-    const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+    if (mode === 'grayscale') {
+        // Simple grayscale conversion
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            data[i] = data[i + 1] = data[i + 2] = gray;
+        }
+    } else if (mode === 'threshold') {
+        // Adaptive thresholding for better text extraction
+        // First convert to grayscale
+        const grayData = [];
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+            grayData.push(gray);
+        }
 
-    for (let i = 0; i < data.length; i += 4) {
-        // Convert to grayscale for better OCR
-        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        // Calculate threshold (simple Otsu's approximation)
+        let sum = 0;
+        for (let i = 0; i < grayData.length; i++) {
+            sum += grayData[i];
+        }
+        const threshold = sum / grayData.length;
 
-        // Apply contrast
-        const contrasted = factor * (gray - 128) + 128;
-        const value = Math.max(0, Math.min(255, contrasted));
+        // Apply threshold
+        for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+            const value = grayData[j] > threshold ? 255 : 0;
+            data[i] = data[i + 1] = data[i + 2] = value;
+        }
+    } else {
+        // Default: light preprocessing - just slight sharpening
+        // No grayscale conversion, keep color
+        const kernel = [
+            0, -1, 0,
+            -1, 5, -1,
+            0, -1, 0
+        ];
 
-        data[i] = value;     // R
-        data[i + 1] = value; // G
-        data[i + 2] = value; // B
+        const tempData = new Uint8ClampedArray(data);
+        const w = canvas.width;
+        const h = canvas.height;
+
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                for (let c = 0; c < 3; c++) {
+                    let sum = 0;
+                    for (let ky = -1; ky <= 1; ky++) {
+                        for (let kx = -1; kx <= 1; kx++) {
+                            const idx = ((y + ky) * w + (x + kx)) * 4 + c;
+                            sum += tempData[idx] * kernel[(ky + 1) * 3 + (kx + 1)];
+                        }
+                    }
+                    const idx = (y * w + x) * 4 + c;
+                    data[idx] = Math.max(0, Math.min(255, sum));
+                }
+            }
+        }
     }
 
     // Put processed image back
@@ -392,45 +460,107 @@ function preprocessImage(imageElement) {
     return canvas.toDataURL();
 }
 
-async function ocrWithOCRSpace(imageDataUrl) {
-    // Use OCR.space API as fallback for poor quality images
-    console.log('Trying OCR.space for better accuracy...');
-
-    const formData = new FormData();
-
-    // Convert data URL to blob
-    const response = await fetch(imageDataUrl);
-    const blob = await response.blob();
-    formData.append('file', blob, 'ticket.jpg');
-    formData.append('language', 'eng');
-    formData.append('isOverlayRequired', 'false');
-    formData.append('OCREngine', '2'); // Use OCR Engine 2 (more accurate)
+async function tryOCRWithSettings(imageDataUrl, rotation, psmMode, preprocessMode) {
+    // Try OCR with specific settings
+    console.log(`  Trying: rotation=${rotation}°, PSM=${psmMode}, preprocess=${preprocessMode}`);
 
     try {
-        const ocrResponse = await fetch('https://api.ocr.space/parse/image', {
-            method: 'POST',
-            body: formData,
-            // Using free tier - no API key required, but rate limited
-            headers: {
-                'apikey': 'helloworld' // Free tier key
+        const result = await Tesseract.recognize(
+            imageDataUrl,
+            'eng',
+            {
+                logger: () => {}, // Suppress logging for attempts
+                tesseract_pageseg_mode: psmMode
             }
-        });
+        );
 
-        const result = await ocrResponse.json();
+        const extractedPlays = extractNumbersFromOCR(result.data.text);
+        const confidence = result.data.confidence || 0;
 
-        if (result.IsErroredOnProcessing) {
-            console.error('OCR.space error:', result.ErrorMessage);
-            return null;
-        }
+        console.log(`    → confidence=${Math.round(confidence)}%, plays=${extractedPlays.length}`);
 
         return {
-            text: result.ParsedResults[0].ParsedText,
-            confidence: result.ParsedResults[0].TextOrientation ? 90 : 80 // Estimate
+            plays: extractedPlays,
+            confidence: confidence,
+            text: result.data.text,
+            settings: { rotation, psmMode, preprocessMode }
         };
     } catch (error) {
-        console.error('OCR.space API error:', error);
+        console.error(`    → Error:`, error.message);
         return null;
     }
+}
+
+async function multiAttemptOCR(imageElement) {
+    console.log('Starting multi-attempt OCR...');
+
+    const rotations = [0, 90, 180, 270];
+    const psmModes = [
+        3,  // Fully automatic page segmentation (default)
+        6,  // Assume uniform block of text
+        4,  // Assume single column of text
+        11  // Sparse text, find as much as possible
+    ];
+    const preprocessModes = ['none', 'default', 'threshold'];
+
+    const attempts = [];
+    let bestAttempt = null;
+    let bestScore = -1;
+
+    // Try different combinations
+    for (const rotation of rotations) {
+        const rotatedImage = rotateImage(imageElement, rotation);
+
+        for (const preprocessMode of preprocessModes) {
+            const preprocessedImage = preprocessImage(
+                await loadImageFromDataUrl(rotatedImage),
+                preprocessMode
+            );
+
+            for (const psmMode of psmModes) {
+                const result = await tryOCRWithSettings(preprocessedImage, rotation, psmMode, preprocessMode);
+
+                if (result) {
+                    // Score: plays found (most important) + confidence bonus
+                    const score = result.plays.length * 100 + result.confidence;
+
+                    attempts.push({
+                        ...result,
+                        score: score
+                    });
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestAttempt = result;
+                    }
+
+                    // Early exit if we found 5+ plays with good confidence
+                    if (result.plays.length >= 5 && result.confidence > 70) {
+                        console.log(`✓ Found optimal result early, stopping search`);
+                        return bestAttempt;
+                    }
+                }
+            }
+        }
+    }
+
+    console.log(`Completed ${attempts.length} OCR attempts`);
+    if (bestAttempt) {
+        console.log(`Best: rotation=${bestAttempt.settings.rotation}°, PSM=${bestAttempt.settings.psmMode}, preprocess=${bestAttempt.settings.preprocessMode}`);
+        console.log(`      ${bestAttempt.plays.length} plays, ${Math.round(bestAttempt.confidence)}% confidence`);
+    }
+
+    return bestAttempt;
+}
+
+// Helper to load image from data URL
+function loadImageFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = dataUrl;
+    });
 }
 
 async function processTicketImage() {
@@ -441,88 +571,40 @@ async function processTicketImage() {
     // Show processing indicator
     imageControls.style.display = 'none';
     processingIndicator.style.display = 'block';
+    processingIndicator.innerHTML = '<p>Analyzing image (trying multiple angles and settings)...</p>';
 
     try {
-        // Preprocess image for better OCR
-        const preprocessedImage = preprocessImage(image);
+        // Use multi-attempt OCR with rotation and PSM modes
+        const bestResult = await multiAttemptOCR(image);
 
-        // Use Tesseract.js for OCR (primary method)
-        console.log('Running Tesseract OCR...');
-        const result = await Tesseract.recognize(
-            preprocessedImage,
-            'eng',
-            {
-                logger: m => console.log(m)
-            }
-        );
-
-        let ocrText = result.data.text;
-        let ocrConfidence = result.data.confidence || 0;
-        let usedFallback = false;
-
-        // Extract numbers and date from OCR text
-        let extractedPlays = extractNumbersFromOCR(ocrText);
-        let extractedDate = extractDrawingDate(ocrText);
-
-        // Assess image quality
-        let qualityIssues = assessImageQuality(result, extractedPlays);
-
-        // If quality is poor or no plays found, try OCR.space as fallback
-        const shouldUseFallback = ocrConfidence < 60 || extractedPlays.length === 0 ||
-                                  (extractedPlays.length > 0 && extractedPlays.length < 3);
-
-        if (shouldUseFallback) {
-            console.log(`Tesseract quality poor (confidence: ${Math.round(ocrConfidence)}%, plays: ${extractedPlays.length})`);
-            console.log('Attempting OCR.space fallback...');
-
-            processingIndicator.innerHTML = '<p>Retrying with enhanced OCR...</p>';
-
-            const fallbackResult = await ocrWithOCRSpace(preprocessedImage);
-
-            if (fallbackResult) {
-                ocrText = fallbackResult.text;
-                ocrConfidence = fallbackResult.confidence;
-                extractedPlays = extractNumbersFromOCR(ocrText);
-                extractedDate = extractDrawingDate(ocrText);
-                usedFallback = true;
-
-                console.log(`OCR.space result: ${extractedPlays.length} plays found`);
-
-                // Re-assess quality with new results
-                qualityIssues = assessImageQuality(
-                    { data: { confidence: ocrConfidence, text: ocrText } },
-                    extractedPlays
-                );
-            } else {
-                console.log('OCR.space fallback failed, using Tesseract results');
-            }
-
-            processingIndicator.innerHTML = '<p>Processing ticket image...</p>';
-        }
-
-        if (extractedPlays.length === 0) {
-            const message = usedFallback ?
-                'Could not detect numbers even with enhanced OCR. Please enter manually or try a clearer photo.' :
-                'Could not detect any numbers. Please enter manually or try retaking the photo.';
-            alert(message);
+        if (!bestResult || bestResult.plays.length === 0) {
+            alert('Could not detect any numbers. Please enter manually or try a clearer photo.');
             processingIndicator.style.display = 'none';
             imageControls.style.display = 'flex';
             return;
         }
 
-        // Show warning if quality is poor but we got some results
-        if (qualityIssues.hasIssues && !usedFallback) {
-            const shouldContinue = showImageQualityWarning(qualityIssues.issues, qualityIssues.confidence);
+        // Extract date from the best result
+        const extractedDate = extractDrawingDate(bestResult.text);
+
+        // Assess image quality with best result
+        const qualityIssues = assessImageQuality(
+            { data: { confidence: bestResult.confidence, text: bestResult.text } },
+            bestResult.plays
+        );
+
+        // Show warning if quality is still poor
+        if (qualityIssues.hasIssues) {
+            const shouldContinue = showImageQualityWarning(qualityIssues.issues, bestResult.confidence);
             if (!shouldContinue) {
                 processingIndicator.style.display = 'none';
+                imageControls.style.display = 'flex';
                 return; // User chose to retake
             }
-        } else if (usedFallback) {
-            console.log('✓ Used enhanced OCR successfully');
         }
 
         // Add extracted plays to state
-        appState.ticketPlays = extractedPlays;
+        appState.ticketPlays = bestResult.plays;
         appState.extractedDate = extractedDate;
 
         // Hide camera stuff and show plays
