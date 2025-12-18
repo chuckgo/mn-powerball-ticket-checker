@@ -2,93 +2,157 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MN Powerball Ticket Checker</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        .debugger {
-            position: fixed;
-            bottom: 0;
-            width: 100%;
-            max-height: 30vh;
-            overflow-y: auto;
-            background: #1e1e1e;
-            color: #f1f1f1;
-            font-size: 14px;
-            font-family: monospace;
-            border-top: 3px solid #ff4500;
-            padding: 10px;
-        }
-        .debugger h3 {
-            margin: 0;
-            padding: 5px 0;
-            border-bottom: 1px solid #ff4500;
-        }
-        .debugger-log {
-            list-style-type: none;
-            padding: 0;
-            margin: 0;
-        }
-        .debugger-log li {
-            padding: 4px;
-            border-bottom: 1px dashed #2e2e2e;
-            word-wrap: break-word;
-        }
-        .debugger-log li.error {
-            color: #ff4500;
-        }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Powerball Ticket Checker</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <h1>MN Powerball Ticket Checker</h1>
-    <p>Welcome to the MN Powerball Ticket Checker application!</p>
+    <div id="app">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>🎱 Powerball Checker</h1>
+        </header>
 
-    <!-- Debugger interface -->
-    <div class="debugger" id="debugger">
-        <h3>Debugger Console</h3>
-        <ul class="debugger-log" id="debugger-log"></ul>
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Step 1: Get Winning Numbers -->
+            <section id="winning-numbers-section" class="section active">
+                <h2>Step 1: Enter Winning Numbers</h2>
+
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="date">By Date</button>
+                    <button class="tab-btn" data-tab="manual">Manual Entry</button>
+                </div>
+
+                <!-- Date Selection Tab -->
+                <div id="date-tab" class="tab-content active">
+                    <div class="input-group">
+                        <label for="drawing-date">Drawing Date:</label>
+                        <input type="date" id="drawing-date" class="date-input">
+                        <button id="fetch-numbers-btn" class="primary-btn">Get Numbers</button>
+                    </div>
+                    <div id="date-error" class="error-message" style="display: none;"></div>
+                </div>
+
+                <!-- Manual Entry Tab -->
+                <div id="manual-tab" class="tab-content">
+                    <div class="number-input-group">
+                        <label>White Balls (1-69):</label>
+                        <div class="ball-inputs white-balls">
+                            <input type="number" min="1" max="69" class="ball-input white" placeholder="1">
+                            <input type="number" min="1" max="69" class="ball-input white" placeholder="2">
+                            <input type="number" min="1" max="69" class="ball-input white" placeholder="3">
+                            <input type="number" min="1" max="69" class="ball-input white" placeholder="4">
+                            <input type="number" min="1" max="69" class="ball-input white" placeholder="5">
+                        </div>
+                    </div>
+                    <div class="number-input-group">
+                        <label>Powerball (1-26):</label>
+                        <div class="ball-inputs powerball">
+                            <input type="number" min="1" max="26" class="ball-input red" placeholder="PB">
+                        </div>
+                    </div>
+                    <button id="save-manual-numbers-btn" class="primary-btn">Save Numbers</button>
+                </div>
+
+                <!-- Display Winning Numbers -->
+                <div id="winning-numbers-display" class="winning-display" style="display: none;">
+                    <h3>Winning Numbers</h3>
+                    <div id="winning-date-display" class="date-display"></div>
+                    <div class="balls-display">
+                        <div id="white-balls-display" class="balls-container"></div>
+                        <div id="powerball-display" class="balls-container"></div>
+                    </div>
+                    <button id="continue-to-ticket-btn" class="primary-btn">Continue to Ticket Scan</button>
+                </div>
+            </section>
+
+            <!-- Step 2: Scan/Enter Ticket -->
+            <section id="ticket-section" class="section">
+                <button class="back-btn" id="back-to-numbers">← Back</button>
+                <h2>Step 2: Scan Your Ticket</h2>
+
+                <div class="scan-options">
+                    <button id="camera-btn" class="primary-btn">📷 Take Photo</button>
+                    <button id="manual-ticket-btn" class="secondary-btn">✏️ Enter Manually</button>
+                </div>
+
+                <!-- Camera Capture -->
+                <div id="camera-container" style="display: none;">
+                    <video id="camera-feed" autoplay playsinline></video>
+                    <canvas id="camera-canvas" style="display: none;"></canvas>
+                    <div class="camera-controls">
+                        <button id="capture-btn" class="primary-btn">Capture</button>
+                        <button id="cancel-camera-btn" class="secondary-btn">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Captured Image -->
+                <div id="captured-image-container" style="display: none;">
+                    <img id="captured-image" alt="Captured ticket">
+                    <div class="image-controls">
+                        <button id="process-image-btn" class="primary-btn">Process Ticket</button>
+                        <button id="retake-btn" class="secondary-btn">Retake</button>
+                    </div>
+                    <div id="processing-indicator" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Processing ticket...</p>
+                    </div>
+                </div>
+
+                <!-- Ticket Plays -->
+                <div id="ticket-plays-container" style="display: none;">
+                    <h3>Your Plays</h3>
+                    <div id="plays-list"></div>
+                    <button id="add-play-btn" class="secondary-btn">+ Add Play</button>
+                    <button id="check-ticket-btn" class="primary-btn">Check Ticket</button>
+                </div>
+            </section>
+
+            <!-- Step 3: Results -->
+            <section id="results-section" class="section">
+                <h2>Results</h2>
+                <div id="results-summary" class="results-summary"></div>
+                <div id="results-container"></div>
+                <div class="results-actions">
+                    <button id="check-another-btn" class="primary-btn">Check Another Ticket</button>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <script>
-        (function() {
-            const debuggerElement = document.getElementById('debugger');
-            const logElement = document.getElementById('debugger-log');
+    <!-- Modal for adding/editing plays -->
+    <div id="play-modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modal-title">Edit Play</h3>
+            <div class="number-input-group">
+                <label>White Balls (1-69):</label>
+                <div class="ball-inputs white-balls">
+                    <input type="number" min="1" max="69" class="modal-ball-input white" data-index="0">
+                    <input type="number" min="1" max="69" class="modal-ball-input white" data-index="1">
+                    <input type="number" min="1" max="69" class="modal-ball-input white" data-index="2">
+                    <input type="number" min="1" max="69" class="modal-ball-input white" data-index="3">
+                    <input type="number" min="1" max="69" class="modal-ball-input white" data-index="4">
+                </div>
+            </div>
+            <div class="number-input-group">
+                <label>Powerball (1-26):</label>
+                <div class="ball-inputs powerball">
+                    <input type="number" min="1" max="26" class="modal-ball-input red" data-index="5">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button id="save-play-btn" class="primary-btn">Save</button>
+                <button id="delete-play-btn" class="danger-btn" style="display: none;">Delete</button>
+                <button id="cancel-modal-btn" class="secondary-btn">Cancel</button>
+            </div>
+        </div>
+    </div>
 
-            // Helper to log messages to debugger
-            const logMessage = (message, type = 'info') => {
-                const logEntry = document.createElement('li');
-                logEntry.textContent = `[${new Date().toISOString()}] ${message}`;
-                if (type === 'error') {
-                    logEntry.classList.add('error');
-                }
-                logElement.appendChild(logEntry);
-                logElement.scrollTop = logElement.scrollHeight; // Auto-scroll
-            };
-
-            // Capture JavaScript errors
-            window.onerror = function(message, source, lineno, colno, error) {
-                logMessage(`Error: ${message} at ${source}:${lineno}:${colno}`, 'error');
-            };
-
-            // Capture unhandled promise rejections
-            window.onunhandledrejection = function(event) {
-                logMessage(`Unhandled rejection: ${event.reason}`, 'error');
-            };
-
-            // Example: Application status updates
-            logMessage('Application initialized successfully.');
-
-            // Example: Simulate a warning
-            logMessage('Warning: Debugging enabled.', 'warning');
-
-            // Simulate a script load check to demonstrate capturing errors
-            setTimeout(() => logMessage('Script load validation complete.'), 1000);
-        })();
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="powerball-data.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
