@@ -2,27 +2,93 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Powerball Ticket Checker</title>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MN Powerball Ticket Checker</title>
     <style>
-        * {
-            box-sizing: border-box;
+        body {
+            font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
         }
+        .debugger {
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+            max-height: 30vh;
+            overflow-y: auto;
+            background: #1e1e1e;
+            color: #f1f1f1;
+            font-size: 14px;
+            font-family: monospace;
+            border-top: 3px solid #ff4500;
+            padding: 10px;
+        }
+        .debugger h3 {
+            margin: 0;
+            padding: 5px 0;
+            border-bottom: 1px solid #ff4500;
+        }
+        .debugger-log {
+            list-style-type: none;
+            padding: 0;
+            margin: 0;
+        }
+        .debugger-log li {
+            padding: 4px;
+            border-bottom: 1px dashed #2e2e2e;
+            word-wrap: break-word;
+        }
+        .debugger-log li.error {
+            color: #ff4500;
+        }
+    </style>
+</head>
+<body>
+    <h1>MN Powerball Ticket Checker</h1>
+    <p>Welcome to the MN Powerball Ticket Checker application!</p>
 
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        min-height: 100vh;
-        padding: 20px;
-        color: #333;
-    }
+    <!-- Debugger interface -->
+    <div class="debugger" id="debugger">
+        <h3>Debugger Console</h3>
+        <ul class="debugger-log" id="debugger-log"></ul>
+    </div>
 
-    .container {
-        max-width: 800px;
-      ...
+    <script>
+        (function() {
+            const debuggerElement = document.getElementById('debugger');
+            const logElement = document.getElementById('debugger-log');
+
+            // Helper to log messages to debugger
+            const logMessage = (message, type = 'info') => {
+                const logEntry = document.createElement('li');
+                logEntry.textContent = `[${new Date().toISOString()}] ${message}`;
+                if (type === 'error') {
+                    logEntry.classList.add('error');
+                }
+                logElement.appendChild(logEntry);
+                logElement.scrollTop = logElement.scrollHeight; // Auto-scroll
+            };
+
+            // Capture JavaScript errors
+            window.onerror = function(message, source, lineno, colno, error) {
+                logMessage(`Error: ${message} at ${source}:${lineno}:${colno}`, 'error');
+            };
+
+            // Capture unhandled promise rejections
+            window.onunhandledrejection = function(event) {
+                logMessage(`Unhandled rejection: ${event.reason}`, 'error');
+            };
+
+            // Example: Application status updates
+            logMessage('Application initialized successfully.');
+
+            // Example: Simulate a warning
+            logMessage('Warning: Debugging enabled.', 'warning');
+
+            // Simulate a script load check to demonstrate capturing errors
+            setTimeout(() => logMessage('Script load validation complete.'), 1000);
+        })();
+    </script>
+</body>
+</html>
