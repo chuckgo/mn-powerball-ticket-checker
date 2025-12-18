@@ -286,48 +286,132 @@ async function processTicketImage() {
 }
 
 function extractNumbersFromOCR(text) {
-    // This is a simplified extraction - real tickets may need more sophisticated parsing
+    console.log('OCR Text:', text);
     const plays = [];
-    const lines = text.split('\n');
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Look for patterns like "01 02 03 04 05 PB:06" or similar
-    const numberPattern = /\d+/g;
-
+    // Strategy 1: Process line by line, looking for groups of 5-6 numbers
     for (let line of lines) {
-        const numbers = line.match(numberPattern);
-        if (numbers && numbers.length >= 6) {
-            const nums = numbers.map(n => parseInt(n)).filter(n => n >= 1 && n <= 69);
+        const numbers = line.match(/\d+/g);
+        if (!numbers || numbers.length < 5) continue;
 
-            if (nums.length >= 6) {
-                const white = nums.slice(0, 5).sort((a, b) => a - b);
-                const powerball = nums[5] <= 26 ? nums[5] : nums.find(n => n <= 26);
+        const nums = numbers.map(n => parseInt(n));
 
-                if (white.length === 5 && powerball) {
-                    plays.push({ white, powerball });
-                }
+        // Filter out likely play numbers (single digits 1-10 at the start)
+        // and dates (numbers > 2000 or month/day patterns)
+        let filteredNums = nums.filter((n, idx) => {
+            // Skip if it's a single digit 1-10 at the very start of the line
+            if (idx === 0 && n >= 1 && n <= 10 && nums.length > 6) return false;
+            // Skip dates
+            if (n > 2000) return false;
+            // Skip numbers outside valid range for white balls
+            if (n < 1 || n > 69) return false;
+            return true;
+        });
+
+        // Try to extract a play from this line
+        if (filteredNums.length >= 5) {
+            const play = extractPlayFromNumbers(filteredNums);
+            if (play) {
+                plays.push(play);
             }
         }
     }
 
-    // If no plays found, try a more lenient approach
-    if (plays.length === 0) {
-        const allNumbers = text.match(numberPattern);
-        if (allNumbers && allNumbers.length >= 6) {
+    // Strategy 2: If we didn't find enough plays, try processing all numbers together
+    // and looking for groups of 6 consecutive valid numbers
+    if (plays.length < 3) {
+        const allNumbers = text.match(/\d+/g);
+        if (allNumbers) {
             const nums = allNumbers.map(n => parseInt(n));
-            const validNums = nums.filter(n => n >= 1 && n <= 69);
 
-            if (validNums.length >= 5) {
-                const white = validNums.slice(0, 5).sort((a, b) => a - b);
-                const powerball = nums.find(n => n >= 1 && n <= 26) || validNums[5];
+            // Remove likely play numbers and dates
+            const filtered = nums.filter(n => {
+                if (n > 2000) return false; // Dates
+                if (n > 69) return false; // Invalid
+                return true;
+            });
 
-                if (powerball && powerball <= 26) {
-                    plays.push({ white, powerball });
+            // Try to group into plays of 6 numbers
+            const groupedPlays = [];
+            for (let i = 0; i <= filtered.length - 6; i++) {
+                const group = filtered.slice(i, i + 6);
+                const play = extractPlayFromNumbers(group);
+
+                if (play) {
+                    // Check if this play is unique (not already added)
+                    const isDuplicate = groupedPlays.some(p =>
+                        JSON.stringify(p.white) === JSON.stringify(play.white) &&
+                        p.powerball === play.powerball
+                    );
+
+                    if (!isDuplicate) {
+                        groupedPlays.push(play);
+                        i += 5; // Skip ahead to avoid overlapping plays
+                    }
                 }
+            }
+
+            // Use grouped plays if we found more than before
+            if (groupedPlays.length > plays.length) {
+                return groupedPlays;
             }
         }
     }
 
+    console.log('Extracted plays:', plays);
     return plays;
+}
+
+// Helper function to extract a single play from a group of numbers
+function extractPlayFromNumbers(numbers) {
+    if (numbers.length < 5) return null;
+
+    // Separate potential white balls and powerball
+    const whiteCandidates = numbers.filter(n => n >= 1 && n <= 69);
+    const powerballCandidates = numbers.filter(n => n >= 1 && n <= 26);
+
+    if (whiteCandidates.length < 5) return null;
+
+    // Take first 5 valid white balls
+    const white = whiteCandidates.slice(0, 5);
+
+    // Check for duplicates in white balls
+    if (new Set(white).size !== 5) {
+        // If duplicates, try different combinations
+        const uniqueWhite = [...new Set(whiteCandidates)];
+        if (uniqueWhite.length < 5) return null;
+        white.length = 0;
+        white.push(...uniqueWhite.slice(0, 5));
+    }
+
+    // Find powerball - prefer a number that's NOT in white balls and is <= 26
+    let powerball = null;
+
+    // First try: 6th number if it's valid and not in white balls
+    if (numbers.length >= 6) {
+        const sixthNum = numbers[5];
+        if (sixthNum >= 1 && sixthNum <= 26 && !white.includes(sixthNum)) {
+            powerball = sixthNum;
+        }
+    }
+
+    // Second try: find any number <= 26 not in white balls
+    if (!powerball) {
+        powerball = powerballCandidates.find(n => !white.includes(n));
+    }
+
+    // Third try: if all else fails, use any number <= 26
+    if (!powerball && powerballCandidates.length > 0) {
+        powerball = powerballCandidates[powerballCandidates.length - 1];
+    }
+
+    if (!powerball) return null;
+
+    return {
+        white: white.sort((a, b) => a - b),
+        powerball: powerball
+    };
 }
 
 function showManualPlayInput() {
