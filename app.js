@@ -334,102 +334,98 @@ async function processTicketImage() {
 
 function extractNumbersFromOCR(text) {
     console.log('OCR Text:', text);
+
+    // Pre-process OCR text to fix common errors
+    // Fix common PB variations (MB, KB, B with number after, m with number)
+    text = text.replace(/\bMB\b/gi, 'PB');
+    text = text.replace(/\bKB\b/gi, 'PB');
+    text = text.replace(/\bm(\d)/gi, 'PB $1');
+    text = text.replace(/\bB(\d\d?)/gi, 'PB $1');
+
+    // Fix common number OCR errors
+    text = text.replace(/\b72\b/g, '12'); // "72" is often misread "12"
+
+    // Fix concatenated numbers - split 4+ consecutive digits into pairs
+    text = text.replace(/(\d{4,})/g, (match) => {
+        const digits = match.split('');
+        const pairs = [];
+        for (let i = 0; i < digits.length - 1; i += 2) {
+            pairs.push(digits[i] + digits[i + 1]);
+        }
+        if (digits.length % 2 === 1) {
+            pairs.push(digits[digits.length - 1]);
+        }
+        return pairs.join(' ');
+    });
+
     const plays = [];
     const lines = text.split('\n');
 
-    // Strategy 1: Process line by line, looking for lines with "PB" marker
-    console.log('Processing lines for PB markers...');
+    // Process line by line, looking for lines with 6+ valid numbers
+    console.log('Processing lines for lottery plays...');
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
 
-        // Check if this line contains "PB"
-        if (/\bPB\b/i.test(line)) {
-            console.log(`Line ${i} contains PB: "${line}"`);
+        // Skip lines that are clearly not lottery plays
+        if (line.length < 10) continue;
 
-            // Extract all numbers from this line
-            const numbers = line.match(/\d+/g);
-            if (!numbers) continue;
+        // Extract all numbers from this line
+        const numbers = line.match(/\d+/g);
+        if (!numbers || numbers.length < 6) continue;
 
-            const nums = numbers.map(n => parseInt(n));
-            console.log(`  Numbers on line: ${nums.join(', ')}`);
+        const nums = numbers.map(n => parseInt(n));
+        const validNums = nums.filter(n => n >= 1 && n <= 69);
 
-            // Filter to valid lottery range (1-69)
-            const validNums = nums.filter(n => n >= 1 && n <= 69);
+        // Need at least 6 valid numbers
+        if (validNums.length < 6) continue;
 
-            if (validNums.length >= 6) {
-                // Look for pattern: 5 numbers (white balls) followed by PB, then 1 number (powerball)
-                // The powerball should be 1-26
+        console.log(`Line ${i}: "${line}"`);
+        console.log(`  Valid numbers: ${validNums.join(', ')}`);
 
-                // Try to find a valid play in this line
-                // Take the last 6 valid numbers (should be the actual play numbers)
-                const lastSix = validNums.slice(-6);
-
-                // Check if last number is a valid powerball (1-26)
-                const potentialPB = lastSix[5];
-
-                if (potentialPB >= 1 && potentialPB <= 26) {
-                    const whiteBalls = lastSix.slice(0, 5);
-
-                    // Verify 5 unique white balls
-                    if (new Set(whiteBalls).size === 5) {
-                        const play = {
-                            white: whiteBalls.sort((a, b) => a - b),
-                            powerball: potentialPB
-                        };
-
-                        console.log(`  ✓ Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
-                        plays.push(play);
-                    } else {
-                        console.log(`  ✗ White balls not unique: ${whiteBalls.join(', ')}`);
-                    }
-                } else {
-                    console.log(`  ✗ Last number ${potentialPB} is not a valid powerball`);
-                }
-            } else {
-                console.log(`  ✗ Not enough valid numbers (need 6, found ${validNums.length})`);
+        // If line has "PB", extract the powerball specifically from after "PB"
+        let powerball = null;
+        let powerballIndex = -1;
+        const pbMatch = line.match(/\bPB\s*(\d+)/i);
+        if (pbMatch) {
+            const pbNum = parseInt(pbMatch[1]);
+            if (pbNum >= 1 && pbNum <= 26) {
+                powerball = pbNum;
+                // Find index of this powerball in validNums
+                powerballIndex = validNums.indexOf(pbNum);
+                console.log(`  Found PB marker with powerball: ${powerball} at index ${powerballIndex}`);
             }
         }
-    }
 
-    // Strategy 2: If we didn't find plays with PB markers, try consecutive grouping
-    if (plays.length === 0) {
-        console.log('PB marker approach found 0 plays, trying consecutive grouping...');
+        // If we didn't find PB marker, use last valid number as powerball
+        if (!powerball) {
+            powerball = validNums[validNums.length - 1];
+            powerballIndex = validNums.length - 1;
+        }
 
-        const allNumbers = text.match(/\d+/g);
-        if (allNumbers) {
-            const nums = allNumbers.map(n => parseInt(n));
-            const validNums = nums.filter(n => n >= 1 && n <= 69);
+        // Get white balls - take the 5 numbers immediately before the powerball
+        let whiteBalls;
+        if (powerballIndex >= 5) {
+            whiteBalls = validNums.slice(powerballIndex - 5, powerballIndex);
+        } else {
+            const lastSix = validNums.slice(-6);
+            whiteBalls = lastSix.slice(0, 5);
+        }
 
-            console.log(`Valid numbers: ${validNums.join(', ')}`);
+        if (whiteBalls.length === 5 && new Set(whiteBalls).size === 5 && powerball >= 1 && powerball <= 26) {
+            const play = {
+                white: whiteBalls.sort((a, b) => a - b),
+                powerball: powerball
+            };
 
-            for (let i = 0; i <= validNums.length - 6; i++) {
-                const group = validNums.slice(i, i + 6);
-                const whiteBalls = group.slice(0, 5);
-                const uniqueWhite = new Set(whiteBalls);
-
-                if (uniqueWhite.size === 5) {
-                    const powerball = group[5];
-
-                    if (powerball >= 1 && powerball <= 26) {
-                        const play = {
-                            white: whiteBalls.sort((a, b) => a - b),
-                            powerball: powerball
-                        };
-
-                        const isDuplicate = plays.some(p =>
-                            JSON.stringify(p.white) === JSON.stringify(play.white) &&
-                            p.powerball === play.powerball
-                        );
-
-                        if (!isDuplicate) {
-                            console.log(`Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
-                            plays.push(play);
-                            i += 5;
-                        }
-                    }
-                }
-            }
+            console.log(`  ✓ Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
+            plays.push(play);
+        } else if (new Set(whiteBalls).size !== whiteBalls.length) {
+            console.log(`  ✗ White balls not unique: ${whiteBalls.join(', ')}`);
+        } else if (whiteBalls.length < 5) {
+            console.log(`  ✗ Not enough white balls: ${whiteBalls.join(', ')}`);
+        } else {
+            console.log(`  ✗ Invalid powerball: ${powerball}`);
         }
     }
 
