@@ -27,7 +27,25 @@ function initializeApp() {
     const today = new Date().toISOString().split('T')[0];
     document.getElementById('drawing-date').value = today;
 
+    // Update footer with current date/time to show latest version
+    updateFooter();
+
     console.log('App initialized');
+}
+
+function updateFooter() {
+    const lastUpdatedElement = document.getElementById('last-updated');
+    if (lastUpdatedElement) {
+        const now = new Date();
+        const dateStr = now.toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        lastUpdatedElement.textContent = dateStr;
+    }
 }
 
 // ===== TAB SWITCHING =====
