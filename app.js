@@ -281,6 +281,76 @@ function retakePhoto() {
     startCamera();
 }
 
+function assessImageQuality(ocrResult, extractedPlays) {
+    const issues = [];
+    const confidence = ocrResult.data.confidence || 0;
+
+    // Check OCR confidence
+    if (confidence < 60) {
+        issues.push('low_confidence');
+    }
+
+    // Check if we got fewer plays than expected (typical ticket has 5+ plays)
+    if (extractedPlays.length > 0 && extractedPlays.length < 3) {
+        issues.push('few_plays');
+    }
+
+    // Check text quality - if OCR result is mostly garbage characters
+    const text = ocrResult.data.text;
+    const alphanumericRatio = (text.match(/[a-zA-Z0-9]/g) || []).length / Math.max(text.length, 1);
+    if (alphanumericRatio < 0.3) {
+        issues.push('garbled_text');
+    }
+
+    return {
+        hasIssues: issues.length > 0,
+        issues: issues,
+        confidence: confidence
+    };
+}
+
+function showImageQualityWarning(issues, confidence) {
+    const hints = [];
+
+    if (issues.includes('no_plays_detected') || issues.includes('garbled_text')) {
+        hints.push('• Hold the camera steady and ensure the ticket is in focus');
+        hints.push('• Make sure there is good lighting on the ticket');
+        hints.push('• Try taking the photo straight-on (not at an angle)');
+    }
+
+    if (issues.includes('low_confidence')) {
+        hints.push('• The image quality is low (confidence: ' + Math.round(confidence) + '%)');
+        hints.push('• Avoid shadows and glare on the ticket');
+    }
+
+    if (issues.includes('few_plays')) {
+        hints.push('• Only found a few plays - the whole ticket may not be visible');
+        hints.push('• Make sure the entire play area is in the frame');
+    }
+
+    const message = '⚠️ Image Quality Issue\n\n' +
+                    'The photo may not be clear enough for accurate scanning.\n\n' +
+                    'Tips for better results:\n' +
+                    hints.join('\n') +
+                    '\n\nYou can continue with these results or retake the photo.';
+
+    // Show as a non-blocking notification if we got some results, blocking alert if we got nothing
+    if (issues.includes('no_plays_detected')) {
+        alert(message);
+    } else {
+        // For partial results, log warning but allow user to continue
+        console.warn('Image quality issues:', issues);
+        // Could show a dismissible banner here instead of alert
+        if (confirm(message + '\n\nContinue with these results?')) {
+            return true;
+        } else {
+            // User wants to retake
+            document.querySelector('.image-controls').style.display = 'flex';
+            return false;
+        }
+    }
+}
+
 async function processTicketImage() {
     const image = document.getElementById('captured-image');
     const processingIndicator = document.getElementById('processing-indicator');
@@ -304,11 +374,23 @@ async function processTicketImage() {
         const extractedPlays = extractNumbersFromOCR(result.data.text);
         const extractedDate = extractDrawingDate(result.data.text);
 
+        // Assess image quality
+        const qualityIssues = assessImageQuality(result, extractedPlays);
+
         if (extractedPlays.length === 0) {
-            alert('Could not detect any numbers. Please enter manually or try retaking the photo.');
+            showImageQualityWarning(['no_plays_detected'], qualityIssues.confidence);
             processingIndicator.style.display = 'none';
             imageControls.style.display = 'flex';
             return;
+        }
+
+        // Show warning if quality is poor but we got some results
+        if (qualityIssues.hasIssues) {
+            const shouldContinue = showImageQualityWarning(qualityIssues.issues, qualityIssues.confidence);
+            if (!shouldContinue) {
+                processingIndicator.style.display = 'none';
+                return; // User chose to retake
+            }
         }
 
         // Add extracted plays to state
