@@ -392,6 +392,47 @@ function preprocessImage(imageElement) {
     return canvas.toDataURL();
 }
 
+async function ocrWithOCRSpace(imageDataUrl) {
+    // Use OCR.space API as fallback for poor quality images
+    console.log('Trying OCR.space for better accuracy...');
+
+    const formData = new FormData();
+
+    // Convert data URL to blob
+    const response = await fetch(imageDataUrl);
+    const blob = await response.blob();
+    formData.append('file', blob, 'ticket.jpg');
+    formData.append('language', 'eng');
+    formData.append('isOverlayRequired', 'false');
+    formData.append('OCREngine', '2'); // Use OCR Engine 2 (more accurate)
+
+    try {
+        const ocrResponse = await fetch('https://api.ocr.space/parse/image', {
+            method: 'POST',
+            body: formData,
+            // Using free tier - no API key required, but rate limited
+            headers: {
+                'apikey': 'helloworld' // Free tier key
+            }
+        });
+
+        const result = await ocrResponse.json();
+
+        if (result.IsErroredOnProcessing) {
+            console.error('OCR.space error:', result.ErrorMessage);
+            return null;
+        }
+
+        return {
+            text: result.ParsedResults[0].ParsedText,
+            confidence: result.ParsedResults[0].TextOrientation ? 90 : 80 // Estimate
+        };
+    } catch (error) {
+        console.error('OCR.space API error:', error);
+        return null;
+    }
+}
+
 async function processTicketImage() {
     const image = document.getElementById('captured-image');
     const processingIndicator = document.getElementById('processing-indicator');
@@ -405,7 +446,8 @@ async function processTicketImage() {
         // Preprocess image for better OCR
         const preprocessedImage = preprocessImage(image);
 
-        // Use Tesseract.js for OCR
+        // Use Tesseract.js for OCR (primary method)
+        console.log('Running Tesseract OCR...');
         const result = await Tesseract.recognize(
             preprocessedImage,
             'eng',
@@ -414,27 +456,69 @@ async function processTicketImage() {
             }
         );
 
+        let ocrText = result.data.text;
+        let ocrConfidence = result.data.confidence || 0;
+        let usedFallback = false;
+
         // Extract numbers and date from OCR text
-        const extractedPlays = extractNumbersFromOCR(result.data.text);
-        const extractedDate = extractDrawingDate(result.data.text);
+        let extractedPlays = extractNumbersFromOCR(ocrText);
+        let extractedDate = extractDrawingDate(ocrText);
 
         // Assess image quality
-        const qualityIssues = assessImageQuality(result, extractedPlays);
+        let qualityIssues = assessImageQuality(result, extractedPlays);
+
+        // If quality is poor or no plays found, try OCR.space as fallback
+        const shouldUseFallback = ocrConfidence < 60 || extractedPlays.length === 0 ||
+                                  (extractedPlays.length > 0 && extractedPlays.length < 3);
+
+        if (shouldUseFallback) {
+            console.log(`Tesseract quality poor (confidence: ${Math.round(ocrConfidence)}%, plays: ${extractedPlays.length})`);
+            console.log('Attempting OCR.space fallback...');
+
+            processingIndicator.innerHTML = '<p>Retrying with enhanced OCR...</p>';
+
+            const fallbackResult = await ocrWithOCRSpace(preprocessedImage);
+
+            if (fallbackResult) {
+                ocrText = fallbackResult.text;
+                ocrConfidence = fallbackResult.confidence;
+                extractedPlays = extractNumbersFromOCR(ocrText);
+                extractedDate = extractDrawingDate(ocrText);
+                usedFallback = true;
+
+                console.log(`OCR.space result: ${extractedPlays.length} plays found`);
+
+                // Re-assess quality with new results
+                qualityIssues = assessImageQuality(
+                    { data: { confidence: ocrConfidence, text: ocrText } },
+                    extractedPlays
+                );
+            } else {
+                console.log('OCR.space fallback failed, using Tesseract results');
+            }
+
+            processingIndicator.innerHTML = '<p>Processing ticket image...</p>';
+        }
 
         if (extractedPlays.length === 0) {
-            showImageQualityWarning(['no_plays_detected'], qualityIssues.confidence);
+            const message = usedFallback ?
+                'Could not detect numbers even with enhanced OCR. Please enter manually or try a clearer photo.' :
+                'Could not detect any numbers. Please enter manually or try retaking the photo.';
+            alert(message);
             processingIndicator.style.display = 'none';
             imageControls.style.display = 'flex';
             return;
         }
 
         // Show warning if quality is poor but we got some results
-        if (qualityIssues.hasIssues) {
+        if (qualityIssues.hasIssues && !usedFallback) {
             const shouldContinue = showImageQualityWarning(qualityIssues.issues, qualityIssues.confidence);
             if (!shouldContinue) {
                 processingIndicator.style.display = 'none';
                 return; // User chose to retake
             }
+        } else if (usedFallback) {
+            console.log('✓ Used enhanced OCR successfully');
         }
 
         // Add extracted plays to state
