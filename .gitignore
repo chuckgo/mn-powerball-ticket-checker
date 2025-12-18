@@ -2,6 +2,8 @@ node_modules/
 package.json
 package-lock.json
 test-ocr.js
+test-output.txt
 *.temp.jpg
 *.preprocessed.jpg
 *.traineddata
+opencv.js

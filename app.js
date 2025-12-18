@@ -351,6 +351,152 @@ function showImageQualityWarning(issues, confidence) {
     }
 }
 
+function perspectiveCorrection(imageElement) {
+    // Use OpenCV.js to detect and correct perspective distortion
+    if (typeof cv === 'undefined') {
+        console.log('OpenCV not loaded, skipping perspective correction');
+        return null;
+    }
+
+    try {
+        // Create canvas with image
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = imageElement.naturalWidth || imageElement.width;
+        canvas.height = imageElement.naturalHeight || imageElement.height;
+        ctx.drawImage(imageElement, 0, 0);
+
+        // Convert to OpenCV Mat
+        const src = cv.imread(canvas);
+        const gray = new cv.Mat();
+        const edges = new cv.Mat();
+        const contours = new cv.MatVector();
+        const hierarchy = new cv.Mat();
+
+        // Convert to grayscale
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+        // Apply Gaussian blur to reduce noise
+        cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+
+        // Detect edges using Canny
+        cv.Canny(gray, edges, 50, 150);
+
+        // Find contours
+        cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+        // Find the largest rectangular contour (likely the ticket)
+        let maxArea = 0;
+        let bestContour = null;
+
+        for (let i = 0; i < contours.size(); i++) {
+            const contour = contours.get(i);
+            const area = cv.contourArea(contour);
+            const perimeter = cv.arcLength(contour, true);
+            const approx = new cv.Mat();
+
+            // Approximate the contour to a polygon
+            cv.approxPolyDP(contour, approx, 0.02 * perimeter, true);
+
+            // Look for a quadrilateral (4 corners)
+            if (approx.rows === 4 && area > maxArea) {
+                maxArea = area;
+                if (bestContour) bestContour.delete();
+                bestContour = approx.clone();
+            }
+            approx.delete();
+        }
+
+        // If we found a good quadrilateral, apply perspective transform
+        if (bestContour && maxArea > (canvas.width * canvas.height * 0.1)) {
+            // Get the 4 corner points
+            const corners = [];
+            for (let i = 0; i < 4; i++) {
+                corners.push({
+                    x: bestContour.data32S[i * 2],
+                    y: bestContour.data32S[i * 2 + 1]
+                });
+            }
+
+            // Order corners: top-left, top-right, bottom-right, bottom-left
+            corners.sort((a, b) => a.y - b.y);
+            const top = corners.slice(0, 2).sort((a, b) => a.x - b.x);
+            const bottom = corners.slice(2, 4).sort((a, b) => a.x - b.x);
+            const ordered = [top[0], top[1], bottom[1], bottom[0]];
+
+            // Calculate output dimensions
+            const width = Math.max(
+                Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y),
+                Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y)
+            );
+            const height = Math.max(
+                Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y),
+                Math.hypot(ordered[2].x - ordered[1].x, ordered[2].y - ordered[1].y)
+            );
+
+            // Define source and destination points
+            const srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                ordered[0].x, ordered[0].y,
+                ordered[1].x, ordered[1].y,
+                ordered[2].x, ordered[2].y,
+                ordered[3].x, ordered[3].y
+            ]);
+
+            const dstPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0,
+                width, 0,
+                width, height,
+                0, height
+            ]);
+
+            // Calculate perspective transform matrix
+            const M = cv.getPerspectiveTransform(srcPoints, dstPoints);
+
+            // Apply the transform
+            const dst = new cv.Mat();
+            cv.warpPerspective(src, dst, M, new cv.Size(width, height));
+
+            // Convert back to canvas
+            const outputCanvas = document.createElement('canvas');
+            cv.imshow(outputCanvas, dst);
+
+            // Cleanup
+            srcPoints.delete();
+            dstPoints.delete();
+            M.delete();
+            dst.delete();
+            bestContour.delete();
+
+            const result = outputCanvas.toDataURL();
+            console.log('✓ Applied perspective correction');
+
+            // Cleanup
+            src.delete();
+            gray.delete();
+            edges.delete();
+            contours.delete();
+            hierarchy.delete();
+
+            return result;
+        }
+
+        // Cleanup if no perspective correction applied
+        if (bestContour) bestContour.delete();
+        src.delete();
+        gray.delete();
+        edges.delete();
+        contours.delete();
+        hierarchy.delete();
+
+        console.log('No clear rectangular contour found for perspective correction');
+        return null;
+
+    } catch (error) {
+        console.error('Perspective correction error:', error);
+        return null;
+    }
+}
+
 function rotateImage(imageElement, degrees) {
     // Rotate image by specified degrees (0, 90, 180, 270)
     const canvas = document.createElement('canvas');
@@ -494,6 +640,16 @@ async function tryOCRWithSettings(imageDataUrl, rotation, psmMode, preprocessMod
 async function multiAttemptOCR(imageElement) {
     console.log('Starting multi-attempt OCR...');
 
+    // Step 1: Try perspective correction first
+    let baseImage = imageElement;
+    const correctedDataUrl = perspectiveCorrection(imageElement);
+    if (correctedDataUrl) {
+        console.log('✓ Using perspective-corrected image as base');
+        baseImage = await loadImageFromDataUrl(correctedDataUrl);
+    } else {
+        console.log('No perspective correction applied, using original');
+    }
+
     const rotations = [0, 90, 180, 270];
     const psmModes = [
         3,  // Fully automatic page segmentation (default)
@@ -507,9 +663,9 @@ async function multiAttemptOCR(imageElement) {
     let bestAttempt = null;
     let bestScore = -1;
 
-    // Try different combinations
+    // Try different combinations on the base (possibly corrected) image
     for (const rotation of rotations) {
-        const rotatedImage = rotateImage(imageElement, rotation);
+        const rotatedImage = rotateImage(baseImage, rotation);
 
         for (const preprocessMode of preprocessModes) {
             const preprocessedImage = preprocessImage(
