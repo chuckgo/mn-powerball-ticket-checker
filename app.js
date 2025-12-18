@@ -339,11 +339,21 @@ function extractNumbersFromOCR(text) {
     // Fix common PB variations (MB, KB, B with number after, m with number)
     text = text.replace(/\bMB\b/gi, 'PB');
     text = text.replace(/\bKB\b/gi, 'PB');
-    text = text.replace(/\bm(\d)/gi, 'PB $1');
+    // Handle m/M before numbers (mM26, m26, M26, m 26 → PB 26)
+    text = text.replace(/m+\s*(\d)/gi, 'PB $1'); // One or more m's followed by optional space and digit
+    // Handle B followed by number (B05, B06 → PB 05, PB 06)
     text = text.replace(/\bB(\d\d?)/gi, 'PB $1');
+    // Handle number followed by B at word boundary (1B, 2B → leave the number, remove B)
+    text = text.replace(/(\d+)B\b/gi, '$1');
+    // Add space before PB if missing (49PB → 49 PB)
+    text = text.replace(/(\d)(PB)/gi, '$1 $2');
 
     // Fix common number OCR errors
     text = text.replace(/\b72\b/g, '12'); // "72" is often misread "12"
+    text = text.replace(/\b71\b/g, '11'); // "71" is often misread "11"
+    text = text.replace(/\bBa\b/g, '04'); // "Ba" is often misread "04"
+    text = text.replace(/\bOa\b/g, '04'); // "Oa" is often misread "04"
+    text = text.replace(/\bO(\d)/g, '0$1'); // "O" (letter) is often "0" (zero)
 
     // Fix concatenated numbers - split 4+ consecutive digits into pairs
     text = text.replace(/(\d{4,})/g, (match) => {

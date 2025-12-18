@@ -2,3 +2,5 @@ node_modules/
 package.json
 package-lock.json
 test-ocr.js
+*.temp.jpg
+*.traineddata
