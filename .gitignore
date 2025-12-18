@@ -3,4 +3,5 @@ package.json
 package-lock.json
 test-ocr.js
 *.temp.jpg
+*.preprocessed.jpg
 *.traineddata
