@@ -335,6 +335,25 @@ function extractNumbersFromOCR(text) {
     console.log('OCR Text:', text);
     const plays = [];
 
+    // Strategy 1: Look for "PB" markers to identify powerballs
+    // Pattern: "PB" followed by a number (1-26), possibly with other chars after
+    const pbPattern = /PB\s*(\d+)/gi;
+    const pbMatches = [];
+    let match;
+
+    while ((match = pbPattern.exec(text)) !== null) {
+        const pbNum = parseInt(match[1]);
+        if (pbNum >= 1 && pbNum <= 26) {
+            pbMatches.push({
+                powerball: pbNum,
+                index: match.index
+            });
+            console.log(`Found PB marker: ${pbNum} at position ${match.index}`);
+        }
+    }
+
+    console.log(`Found ${pbMatches.length} powerball markers`);
+
     // Extract all numbers from the text
     const allNumbers = text.match(/\d+/g);
     if (!allNumbers) {
@@ -345,76 +364,77 @@ function extractNumbersFromOCR(text) {
     const nums = allNumbers.map(n => parseInt(n));
     console.log('All numbers found:', nums);
 
-    // Filter out obviously invalid numbers
-    // Keep: 1-69 (valid lottery numbers)
-    // Remove: >2000 (dates/years), >69 (barcodes, amounts, etc.)
+    // Filter to valid lottery numbers (1-69)
     const validNums = nums.filter(n => n >= 1 && n <= 69);
     console.log('Valid lottery numbers (1-69):', validNums);
 
-    // Strategy: Look for groups of exactly 6 consecutive valid numbers
-    // that form a valid play (5 unique white balls + 1 powerball)
-    const groupedPlays = [];
+    // If we found PB markers, use them to identify plays
+    if (pbMatches.length > 0) {
+        // Remove the powerball numbers from the valid numbers to get white balls
+        const powerballs = pbMatches.map(pb => pb.powerball);
+        const whiteBalls = validNums.filter(n => !powerballs.includes(n) || n > 26);
 
-    for (let i = 0; i <= validNums.length - 6; i++) {
-        const group = validNums.slice(i, i + 6);
+        console.log('Powerballs:', powerballs);
+        console.log('White balls candidates:', whiteBalls);
 
-        // Check if first 5 are unique (white balls shouldn't repeat)
-        const whiteBalls = group.slice(0, 5);
-        const uniqueWhite = new Set(whiteBalls);
-
-        // Must have 5 unique white balls
-        if (uniqueWhite.size === 5) {
-            const powerball = group[5];
-
-            // Powerball should be 1-26
-            if (powerball >= 1 && powerball <= 26) {
-                const play = {
-                    white: whiteBalls.sort((a, b) => a - b),
-                    powerball: powerball
-                };
-
-                // Check if this play is unique (not already added)
-                const isDuplicate = groupedPlays.some(p =>
-                    JSON.stringify(p.white) === JSON.stringify(play.white) &&
-                    p.powerball === play.powerball
-                );
-
-                if (!isDuplicate) {
-                    console.log(`Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
-                    groupedPlays.push(play);
-                    // Jump ahead to avoid overlapping
-                    i += 5;
-                }
+        // Try to group white balls into sets of 5
+        // For each powerball, take the next 5 unique white balls
+        const whiteBallSets = [];
+        for (let i = 0; i < whiteBalls.length - 4; i += 5) {
+            const set = whiteBalls.slice(i, i + 5);
+            if (new Set(set).size === 5) {
+                whiteBallSets.push(set);
             }
+        }
+
+        console.log(`Found ${whiteBallSets.length} sets of white balls`);
+
+        // Match white ball sets with powerballs
+        const numPlays = Math.min(whiteBallSets.length, powerballs.length);
+        for (let i = 0; i < numPlays; i++) {
+            plays.push({
+                white: whiteBallSets[i].sort((a, b) => a - b),
+                powerball: powerballs[i]
+            });
+            console.log(`Play ${i + 1}: ${whiteBallSets[i].join(', ')} + PB ${powerballs[i]}`);
         }
     }
 
-    // If we found fewer than 3 plays, try a more lenient approach
-    // Look for any group of 6 numbers where at least 4 of the first 5 are unique
-    if (groupedPlays.length < 3) {
-        console.log('Trying lenient extraction...');
+    // Fallback: If PB marker approach didn't work, try consecutive grouping
+    if (plays.length === 0) {
+        console.log('PB marker approach failed, trying consecutive grouping...');
 
         for (let i = 0; i <= validNums.length - 6; i++) {
             const group = validNums.slice(i, i + 6);
-            const play = extractPlayFromNumbers(group);
+            const whiteBalls = group.slice(0, 5);
+            const uniqueWhite = new Set(whiteBalls);
 
-            if (play) {
-                const isDuplicate = groupedPlays.some(p =>
-                    JSON.stringify(p.white) === JSON.stringify(play.white) &&
-                    p.powerball === play.powerball
-                );
+            if (uniqueWhite.size === 5) {
+                const powerball = group[5];
 
-                if (!isDuplicate) {
-                    console.log(`Found play (lenient): ${play.white.join(', ')} + PB ${play.powerball}`);
-                    groupedPlays.push(play);
-                    i += 4; // Smaller skip for lenient mode
+                if (powerball >= 1 && powerball <= 26) {
+                    const play = {
+                        white: whiteBalls.sort((a, b) => a - b),
+                        powerball: powerball
+                    };
+
+                    const isDuplicate = plays.some(p =>
+                        JSON.stringify(p.white) === JSON.stringify(play.white) &&
+                        p.powerball === play.powerball
+                    );
+
+                    if (!isDuplicate) {
+                        console.log(`Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
+                        plays.push(play);
+                        i += 5;
+                    }
                 }
             }
         }
     }
 
-    console.log(`Total plays extracted: ${groupedPlays.length}`);
-    return groupedPlays;
+    console.log(`Total plays extracted: ${plays.length}`);
+    return plays;
 }
 
 // Helper function to extract a single play from a group of numbers
