@@ -35,8 +35,8 @@ function initializeApp() {
 }
 
 function updateFooter() {
-    const lastUpdatedElement = document.getElementById('last-updated');
-    if (lastUpdatedElement) {
+    const sessionTimeElement = document.getElementById('session-time');
+    if (sessionTimeElement) {
         const now = new Date();
         const dateStr = now.toLocaleString('en-US', {
             year: 'numeric',
@@ -46,7 +46,7 @@ function updateFooter() {
             minute: '2-digit',
             second: '2-digit'
         });
-        lastUpdatedElement.textContent = dateStr;
+        sessionTimeElement.textContent = dateStr;
     }
 }
 

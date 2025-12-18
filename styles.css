@@ -696,8 +696,19 @@ body {
     color: var(--text-light);
 }
 
-.app-footer #last-updated {
+.app-footer .version {
     font-weight: 600;
+    color: var(--primary-color);
+}
+
+.app-footer .separator {
+    margin: 0 0.5rem;
+    opacity: 0.5;
+}
+
+.app-footer .session-time {
+    font-size: 0.7rem;
+    opacity: 0.8;
 }
 
 /* Responsive */
