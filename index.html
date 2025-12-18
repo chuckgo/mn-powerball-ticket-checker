@@ -17,9 +17,53 @@
 
         <!-- Main Content -->
         <main class="main-content">
-            <!-- Step 1: Get Winning Numbers -->
-            <section id="winning-numbers-section" class="section active">
-                <h2>Step 1: Enter Winning Numbers</h2>
+            <!-- Step 1: Scan/Enter Ticket -->
+            <section id="ticket-section" class="section active">
+                <h2>Step 1: Scan Your Ticket</h2>
+
+                <div class="scan-options">
+                    <button id="camera-btn" class="primary-btn">📷 Take Photo</button>
+                    <button id="upload-btn" class="primary-btn">📁 Upload Photo</button>
+                    <input type="file" id="file-upload" accept="image/*" style="display: none;">
+                    <button id="manual-ticket-btn" class="secondary-btn">✏️ Enter Manually</button>
+                </div>
+
+                <!-- Camera Capture -->
+                <div id="camera-container" style="display: none;">
+                    <video id="camera-feed" autoplay playsinline></video>
+                    <canvas id="camera-canvas" style="display: none;"></canvas>
+                    <div class="camera-controls">
+                        <button id="capture-btn" class="primary-btn">Capture</button>
+                        <button id="cancel-camera-btn" class="secondary-btn">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Captured/Uploaded Image -->
+                <div id="captured-image-container" style="display: none;">
+                    <img id="captured-image" alt="Ticket image">
+                    <div class="image-controls">
+                        <button id="process-image-btn" class="primary-btn">Process Ticket</button>
+                        <button id="retake-btn" class="secondary-btn">Try Again</button>
+                    </div>
+                    <div id="processing-indicator" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Processing ticket...</p>
+                    </div>
+                </div>
+
+                <!-- Ticket Plays -->
+                <div id="ticket-plays-container" style="display: none;">
+                    <h3>Your Plays</h3>
+                    <div id="plays-list"></div>
+                    <button id="add-play-btn" class="secondary-btn">+ Add Play</button>
+                    <button id="continue-to-numbers-btn" class="primary-btn">Continue</button>
+                </div>
+            </section>
+
+            <!-- Step 2: Enter Winning Numbers -->
+            <section id="winning-numbers-section" class="section">
+                <button class="back-btn" id="back-to-ticket">← Back</button>
+                <h2>Step 2: Enter Winning Numbers</h2>
 
                 <div class="tab-buttons">
                     <button class="tab-btn active" data-tab="date">By Date</button>
@@ -65,48 +109,6 @@
                         <div id="white-balls-display" class="balls-container"></div>
                         <div id="powerball-display" class="balls-container"></div>
                     </div>
-                    <button id="continue-to-ticket-btn" class="primary-btn">Continue to Ticket Scan</button>
-                </div>
-            </section>
-
-            <!-- Step 2: Scan/Enter Ticket -->
-            <section id="ticket-section" class="section">
-                <button class="back-btn" id="back-to-numbers">← Back</button>
-                <h2>Step 2: Scan Your Ticket</h2>
-
-                <div class="scan-options">
-                    <button id="camera-btn" class="primary-btn">📷 Take Photo</button>
-                    <button id="manual-ticket-btn" class="secondary-btn">✏️ Enter Manually</button>
-                </div>
-
-                <!-- Camera Capture -->
-                <div id="camera-container" style="display: none;">
-                    <video id="camera-feed" autoplay playsinline></video>
-                    <canvas id="camera-canvas" style="display: none;"></canvas>
-                    <div class="camera-controls">
-                        <button id="capture-btn" class="primary-btn">Capture</button>
-                        <button id="cancel-camera-btn" class="secondary-btn">Cancel</button>
-                    </div>
-                </div>
-
-                <!-- Captured Image -->
-                <div id="captured-image-container" style="display: none;">
-                    <img id="captured-image" alt="Captured ticket">
-                    <div class="image-controls">
-                        <button id="process-image-btn" class="primary-btn">Process Ticket</button>
-                        <button id="retake-btn" class="secondary-btn">Retake</button>
-                    </div>
-                    <div id="processing-indicator" style="display: none;">
-                        <div class="spinner"></div>
-                        <p>Processing ticket...</p>
-                    </div>
-                </div>
-
-                <!-- Ticket Plays -->
-                <div id="ticket-plays-container" style="display: none;">
-                    <h3>Your Plays</h3>
-                    <div id="plays-list"></div>
-                    <button id="add-play-btn" class="secondary-btn">+ Add Play</button>
                     <button id="check-ticket-btn" class="primary-btn">Check Ticket</button>
                 </div>
             </section>

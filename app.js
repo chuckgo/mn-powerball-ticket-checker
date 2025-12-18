@@ -3,11 +3,12 @@
 
 // App State
 const appState = {
-    currentSection: 'winning-numbers-section',
+    currentSection: 'ticket-section',
     winningNumbers: null,
     ticketPlays: [],
     currentEditIndex: null,
-    cameraStream: null
+    cameraStream: null,
+    extractedDate: null
 };
 
 // Initialize app when DOM is loaded
@@ -77,10 +78,8 @@ function setupWinningNumbersInput() {
     // Manual entry
     document.getElementById('save-manual-numbers-btn').addEventListener('click', saveManualNumbers);
 
-    // Continue button
-    document.getElementById('continue-to-ticket-btn').addEventListener('click', () => {
-        navigateToSection('ticket-section');
-    });
+    // Check ticket button (now in winning numbers section)
+    document.getElementById('check-ticket-btn').addEventListener('click', checkTicket);
 }
 
 function fetchNumbersByDate() {
@@ -184,16 +183,38 @@ function displayWinningNumbers() {
 // ===== TICKET SCANNING =====
 function setupTicketScanning() {
     document.getElementById('camera-btn').addEventListener('click', startCamera);
+    document.getElementById('upload-btn').addEventListener('click', () => {
+        document.getElementById('file-upload').click();
+    });
+    document.getElementById('file-upload').addEventListener('change', handleFileUpload);
     document.getElementById('manual-ticket-btn').addEventListener('click', showManualPlayInput);
     document.getElementById('capture-btn').addEventListener('click', captureImage);
     document.getElementById('cancel-camera-btn').addEventListener('click', stopCamera);
     document.getElementById('retake-btn').addEventListener('click', retakePhoto);
     document.getElementById('process-image-btn').addEventListener('click', processTicketImage);
     document.getElementById('add-play-btn').addEventListener('click', () => openPlayModal());
-    document.getElementById('check-ticket-btn').addEventListener('click', checkTicket);
-    document.getElementById('back-to-numbers').addEventListener('click', () => {
+    document.getElementById('continue-to-numbers-btn').addEventListener('click', () => {
         navigateToSection('winning-numbers-section');
     });
+    document.getElementById('back-to-ticket').addEventListener('click', () => {
+        navigateToSection('ticket-section');
+    });
+}
+
+function handleFileUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const capturedImage = document.getElementById('captured-image');
+        capturedImage.src = e.target.result;
+
+        // Hide scan options and show image
+        document.querySelector('.scan-options').style.display = 'none';
+        document.getElementById('captured-image-container').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
 }
 
 async function startCamera() {
@@ -278,8 +299,9 @@ async function processTicketImage() {
             }
         );
 
-        // Extract numbers from OCR text
+        // Extract numbers and date from OCR text
         const extractedPlays = extractNumbersFromOCR(result.data.text);
+        const extractedDate = extractDrawingDate(result.data.text);
 
         if (extractedPlays.length === 0) {
             alert('Could not detect any numbers. Please enter manually or try retaking the photo.');
@@ -290,10 +312,16 @@ async function processTicketImage() {
 
         // Add extracted plays to state
         appState.ticketPlays = extractedPlays;
+        appState.extractedDate = extractedDate;
 
         // Hide camera stuff and show plays
         document.getElementById('captured-image-container').style.display = 'none';
         showTicketPlays();
+
+        // Auto-populate drawing date if extracted
+        if (extractedDate) {
+            document.getElementById('drawing-date').value = extractedDate;
+        }
 
     } catch (error) {
         console.error('OCR error:', error);
@@ -432,6 +460,65 @@ function extractPlayFromNumbers(numbers) {
     };
 }
 
+// Extract drawing date from OCR text
+function extractDrawingDate(text) {
+    console.log('Extracting date from text:', text);
+
+    // Look for various date patterns
+    const datePatterns = [
+        // MM/DD/YYYY or MM/DD/YY
+        /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/,
+        // Month DD, YYYY
+        /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(\d{4})/i,
+        // YYYY-MM-DD
+        /(\d{4})-(\d{1,2})-(\d{1,2})/,
+        // Draw Date: MM/DD/YYYY
+        /Draw\s+Date:?\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})/i
+    ];
+
+    for (let pattern of datePatterns) {
+        const match = text.match(pattern);
+        if (match) {
+            try {
+                let year, month, day;
+
+                if (match[0].includes('/')) {
+                    month = parseInt(match[1]);
+                    day = parseInt(match[2]);
+                    year = parseInt(match[3]);
+                } else if (match[0].includes('-')) {
+                    year = parseInt(match[1]);
+                    month = parseInt(match[2]);
+                    day = parseInt(match[3]);
+                } else {
+                    // Month name format
+                    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+                    month = monthNames.indexOf(match[1].toLowerCase().substring(0, 3)) + 1;
+                    day = parseInt(match[2]);
+                    year = parseInt(match[3]);
+                }
+
+                // Convert 2-digit year to 4-digit
+                if (year < 100) {
+                    year += year < 50 ? 2000 : 1900;
+                }
+
+                // Validate date
+                if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && year >= 2020 && year <= 2030) {
+                    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    console.log('Extracted date:', dateStr);
+                    return dateStr;
+                }
+            } catch (e) {
+                console.error('Date parsing error:', e);
+            }
+        }
+    }
+
+    console.log('No date found');
+    return null;
+}
+
 function showManualPlayInput() {
     openPlayModal();
 }
@@ -455,6 +542,17 @@ function createPlayItem(play, index) {
     const div = document.createElement('div');
     div.className = 'play-item';
 
+    const contentDiv = document.createElement('div');
+    contentDiv.style.flex = '1';
+
+    // Show play number only if there are multiple plays
+    if (appState.ticketPlays.length > 1) {
+        const playLabel = document.createElement('div');
+        playLabel.className = 'play-label';
+        playLabel.textContent = `Play ${index + 1}`;
+        contentDiv.appendChild(playLabel);
+    }
+
     const numbersDiv = document.createElement('div');
     numbersDiv.className = 'play-numbers';
 
@@ -463,6 +561,8 @@ function createPlayItem(play, index) {
     });
 
     numbersDiv.appendChild(createBall(play.powerball, 'red'));
+
+    contentDiv.appendChild(numbersDiv);
 
     const actionsDiv = document.createElement('div');
     actionsDiv.className = 'play-actions';
@@ -480,7 +580,7 @@ function createPlayItem(play, index) {
     actionsDiv.appendChild(editBtn);
     actionsDiv.appendChild(deleteBtn);
 
-    div.appendChild(numbersDiv);
+    div.appendChild(contentDiv);
     div.appendChild(actionsDiv);
 
     return div;
@@ -599,14 +699,14 @@ function deletePlay(index) {
 
 // ===== CHECKING TICKET =====
 function checkTicket() {
-    if (!appState.winningNumbers) {
-        alert('Please enter winning numbers first');
-        navigateToSection('winning-numbers-section');
+    if (appState.ticketPlays.length === 0) {
+        alert('Please scan or enter your ticket first');
+        navigateToSection('ticket-section');
         return;
     }
 
-    if (appState.ticketPlays.length === 0) {
-        alert('Please add at least one play to check');
+    if (!appState.winningNumbers) {
+        alert('Please enter winning numbers');
         return;
     }
 
@@ -655,12 +755,13 @@ function displayResults(results) {
     });
 
     // Display summary
+    const winningCount = results.filter(r => r.prize.amount > 0 || r.prize.type === 'Jackpot').length;
     summary.innerHTML = `
         <h3>Total Results</h3>
         <div class="total-winnings ${totalWinnings > 0 || hasJackpot ? 'winner' : ''}">
             ${hasJackpot ? '🎉 JACKPOT WINNER! 🎉' : `$${totalWinnings.toLocaleString()}`}
         </div>
-        <p>${results.filter(r => r.prize.amount > 0 || r.prize.type === 'Jackpot').length} winning play(s) out of ${results.length}</p>
+        <p>${winningCount} winning ${pluralize('play', winningCount)} out of ${results.length}</p>
     `;
 
     // Display individual results
@@ -694,7 +795,7 @@ function createResultItem(result, index) {
             </div>
         </div>
         <div class="match-stats">
-            ${result.matchCount} white ball${result.matchCount !== 1 ? 's' : ''} matched
+            ${result.matchCount} white ${pluralize('ball', result.matchCount)} matched
             ${result.powerballMatch ? ' + Powerball matched' : ''}
         </div>
     `;
@@ -746,6 +847,7 @@ function resetApp() {
     appState.winningNumbers = null;
     appState.ticketPlays = [];
     appState.currentEditIndex = null;
+    appState.extractedDate = null;
 
     // Reset displays
     document.getElementById('winning-numbers-display').style.display = 'none';
@@ -755,7 +857,7 @@ function resetApp() {
     // Clear inputs
     document.querySelectorAll('.ball-input').forEach(input => input.value = '');
 
-    navigateToSection('winning-numbers-section');
+    navigateToSection('ticket-section');
 }
 
 // ===== UTILITY FUNCTIONS =====
@@ -783,4 +885,15 @@ function showError(element, message) {
     setTimeout(() => {
         element.style.display = 'none';
     }, 5000);
+}
+
+function pluralize(word, count) {
+    if (count === 1) {
+        return word;
+    }
+    // Simple pluralization - add 's' for most words
+    if (word.endsWith('y')) {
+        return word.slice(0, -1) + 'ies';
+    }
+    return word + 's';
 }
