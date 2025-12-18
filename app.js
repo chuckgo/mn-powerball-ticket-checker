@@ -334,79 +334,87 @@ async function processTicketImage() {
 function extractNumbersFromOCR(text) {
     console.log('OCR Text:', text);
     const plays = [];
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Strategy 1: Process line by line, looking for groups of 5-6 numbers
-    for (let line of lines) {
-        const numbers = line.match(/\d+/g);
-        if (!numbers || numbers.length < 5) continue;
-
-        const nums = numbers.map(n => parseInt(n));
-
-        // Filter out likely play numbers (single digits 1-10 at the start)
-        // and dates (numbers > 2000 or month/day patterns)
-        let filteredNums = nums.filter((n, idx) => {
-            // Skip if it's a single digit 1-10 at the very start of the line
-            if (idx === 0 && n >= 1 && n <= 10 && nums.length > 6) return false;
-            // Skip dates
-            if (n > 2000) return false;
-            // Skip numbers outside valid range for white balls
-            if (n < 1 || n > 69) return false;
-            return true;
-        });
-
-        // Try to extract a play from this line
-        if (filteredNums.length >= 5) {
-            const play = extractPlayFromNumbers(filteredNums);
-            if (play) {
-                plays.push(play);
-            }
-        }
+    // Extract all numbers from the text
+    const allNumbers = text.match(/\d+/g);
+    if (!allNumbers) {
+        console.log('No numbers found in OCR text');
+        return plays;
     }
 
-    // Strategy 2: If we didn't find enough plays, try processing all numbers together
-    // and looking for groups of 6 consecutive valid numbers
-    if (plays.length < 3) {
-        const allNumbers = text.match(/\d+/g);
-        if (allNumbers) {
-            const nums = allNumbers.map(n => parseInt(n));
+    const nums = allNumbers.map(n => parseInt(n));
+    console.log('All numbers found:', nums);
 
-            // Remove likely play numbers and dates
-            const filtered = nums.filter(n => {
-                if (n > 2000) return false; // Dates
-                if (n > 69) return false; // Invalid
-                return true;
-            });
+    // Filter out obviously invalid numbers
+    // Keep: 1-69 (valid lottery numbers)
+    // Remove: >2000 (dates/years), >69 (barcodes, amounts, etc.)
+    const validNums = nums.filter(n => n >= 1 && n <= 69);
+    console.log('Valid lottery numbers (1-69):', validNums);
 
-            // Try to group into plays of 6 numbers
-            const groupedPlays = [];
-            for (let i = 0; i <= filtered.length - 6; i++) {
-                const group = filtered.slice(i, i + 6);
-                const play = extractPlayFromNumbers(group);
+    // Strategy: Look for groups of exactly 6 consecutive valid numbers
+    // that form a valid play (5 unique white balls + 1 powerball)
+    const groupedPlays = [];
 
-                if (play) {
-                    // Check if this play is unique (not already added)
-                    const isDuplicate = groupedPlays.some(p =>
-                        JSON.stringify(p.white) === JSON.stringify(play.white) &&
-                        p.powerball === play.powerball
-                    );
+    for (let i = 0; i <= validNums.length - 6; i++) {
+        const group = validNums.slice(i, i + 6);
 
-                    if (!isDuplicate) {
-                        groupedPlays.push(play);
-                        i += 5; // Skip ahead to avoid overlapping plays
-                    }
+        // Check if first 5 are unique (white balls shouldn't repeat)
+        const whiteBalls = group.slice(0, 5);
+        const uniqueWhite = new Set(whiteBalls);
+
+        // Must have 5 unique white balls
+        if (uniqueWhite.size === 5) {
+            const powerball = group[5];
+
+            // Powerball should be 1-26
+            if (powerball >= 1 && powerball <= 26) {
+                const play = {
+                    white: whiteBalls.sort((a, b) => a - b),
+                    powerball: powerball
+                };
+
+                // Check if this play is unique (not already added)
+                const isDuplicate = groupedPlays.some(p =>
+                    JSON.stringify(p.white) === JSON.stringify(play.white) &&
+                    p.powerball === play.powerball
+                );
+
+                if (!isDuplicate) {
+                    console.log(`Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
+                    groupedPlays.push(play);
+                    // Jump ahead to avoid overlapping
+                    i += 5;
                 }
             }
+        }
+    }
 
-            // Use grouped plays if we found more than before
-            if (groupedPlays.length > plays.length) {
-                return groupedPlays;
+    // If we found fewer than 3 plays, try a more lenient approach
+    // Look for any group of 6 numbers where at least 4 of the first 5 are unique
+    if (groupedPlays.length < 3) {
+        console.log('Trying lenient extraction...');
+
+        for (let i = 0; i <= validNums.length - 6; i++) {
+            const group = validNums.slice(i, i + 6);
+            const play = extractPlayFromNumbers(group);
+
+            if (play) {
+                const isDuplicate = groupedPlays.some(p =>
+                    JSON.stringify(p.white) === JSON.stringify(play.white) &&
+                    p.powerball === play.powerball
+                );
+
+                if (!isDuplicate) {
+                    console.log(`Found play (lenient): ${play.white.join(', ')} + PB ${play.powerball}`);
+                    groupedPlays.push(play);
+                    i += 4; // Smaller skip for lenient mode
+                }
             }
         }
     }
 
-    console.log('Extracted plays:', plays);
-    return plays;
+    console.log(`Total plays extracted: ${groupedPlays.length}`);
+    return groupedPlays;
 }
 
 // Helper function to extract a single play from a group of numbers
@@ -466,6 +474,8 @@ function extractDrawingDate(text) {
 
     // Look for various date patterns
     const datePatterns = [
+        // Weekday Month DD YY (e.g., "Mon Dec 15 25" or "MON DEC 15 25")
+        /(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(\d{2})/i,
         // MM/DD/YYYY or MM/DD/YY
         /(\d{1,2})\/(\d{1,2})\/(\d{2,4})/,
         // Month DD, YYYY
@@ -482,7 +492,13 @@ function extractDrawingDate(text) {
             try {
                 let year, month, day;
 
-                if (match[0].includes('/')) {
+                // Check if it's the weekday format (Mon Dec 15 25)
+                if (match[0].match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i)) {
+                    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+                    month = monthNames.indexOf(match[2].toLowerCase().substring(0, 3)) + 1;
+                    day = parseInt(match[3]);
+                    year = parseInt(match[4]);
+                } else if (match[0].includes('/')) {
                     month = parseInt(match[1]);
                     day = parseInt(match[2]);
                     year = parseInt(match[3]);
