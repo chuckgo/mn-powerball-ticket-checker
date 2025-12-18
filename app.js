@@ -334,99 +334,98 @@ async function processTicketImage() {
 function extractNumbersFromOCR(text) {
     console.log('OCR Text:', text);
     const plays = [];
+    const lines = text.split('\n');
 
-    // Strategy 1: Look for "PB" markers to identify powerballs
-    // Pattern: "PB" followed by a number (1-26), possibly with other chars after
-    const pbPattern = /PB\s*(\d+)/gi;
-    const pbMatches = [];
-    let match;
+    // Strategy 1: Process line by line, looking for lines with "PB" marker
+    console.log('Processing lines for PB markers...');
 
-    while ((match = pbPattern.exec(text)) !== null) {
-        const pbNum = parseInt(match[1]);
-        if (pbNum >= 1 && pbNum <= 26) {
-            pbMatches.push({
-                powerball: pbNum,
-                index: match.index
-            });
-            console.log(`Found PB marker: ${pbNum} at position ${match.index}`);
-        }
-    }
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
 
-    console.log(`Found ${pbMatches.length} powerball markers`);
+        // Check if this line contains "PB"
+        if (/\bPB\b/i.test(line)) {
+            console.log(`Line ${i} contains PB: "${line}"`);
 
-    // Extract all numbers from the text
-    const allNumbers = text.match(/\d+/g);
-    if (!allNumbers) {
-        console.log('No numbers found in OCR text');
-        return plays;
-    }
+            // Extract all numbers from this line
+            const numbers = line.match(/\d+/g);
+            if (!numbers) continue;
 
-    const nums = allNumbers.map(n => parseInt(n));
-    console.log('All numbers found:', nums);
+            const nums = numbers.map(n => parseInt(n));
+            console.log(`  Numbers on line: ${nums.join(', ')}`);
 
-    // Filter to valid lottery numbers (1-69)
-    const validNums = nums.filter(n => n >= 1 && n <= 69);
-    console.log('Valid lottery numbers (1-69):', validNums);
+            // Filter to valid lottery range (1-69)
+            const validNums = nums.filter(n => n >= 1 && n <= 69);
 
-    // If we found PB markers, use them to identify plays
-    if (pbMatches.length > 0) {
-        // Remove the powerball numbers from the valid numbers to get white balls
-        const powerballs = pbMatches.map(pb => pb.powerball);
-        const whiteBalls = validNums.filter(n => !powerballs.includes(n) || n > 26);
+            if (validNums.length >= 6) {
+                // Look for pattern: 5 numbers (white balls) followed by PB, then 1 number (powerball)
+                // The powerball should be 1-26
 
-        console.log('Powerballs:', powerballs);
-        console.log('White balls candidates:', whiteBalls);
+                // Try to find a valid play in this line
+                // Take the last 6 valid numbers (should be the actual play numbers)
+                const lastSix = validNums.slice(-6);
 
-        // Try to group white balls into sets of 5
-        // For each powerball, take the next 5 unique white balls
-        const whiteBallSets = [];
-        for (let i = 0; i < whiteBalls.length - 4; i += 5) {
-            const set = whiteBalls.slice(i, i + 5);
-            if (new Set(set).size === 5) {
-                whiteBallSets.push(set);
+                // Check if last number is a valid powerball (1-26)
+                const potentialPB = lastSix[5];
+
+                if (potentialPB >= 1 && potentialPB <= 26) {
+                    const whiteBalls = lastSix.slice(0, 5);
+
+                    // Verify 5 unique white balls
+                    if (new Set(whiteBalls).size === 5) {
+                        const play = {
+                            white: whiteBalls.sort((a, b) => a - b),
+                            powerball: potentialPB
+                        };
+
+                        console.log(`  ✓ Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
+                        plays.push(play);
+                    } else {
+                        console.log(`  ✗ White balls not unique: ${whiteBalls.join(', ')}`);
+                    }
+                } else {
+                    console.log(`  ✗ Last number ${potentialPB} is not a valid powerball`);
+                }
+            } else {
+                console.log(`  ✗ Not enough valid numbers (need 6, found ${validNums.length})`);
             }
         }
-
-        console.log(`Found ${whiteBallSets.length} sets of white balls`);
-
-        // Match white ball sets with powerballs
-        const numPlays = Math.min(whiteBallSets.length, powerballs.length);
-        for (let i = 0; i < numPlays; i++) {
-            plays.push({
-                white: whiteBallSets[i].sort((a, b) => a - b),
-                powerball: powerballs[i]
-            });
-            console.log(`Play ${i + 1}: ${whiteBallSets[i].join(', ')} + PB ${powerballs[i]}`);
-        }
     }
 
-    // Fallback: If PB marker approach didn't work, try consecutive grouping
+    // Strategy 2: If we didn't find plays with PB markers, try consecutive grouping
     if (plays.length === 0) {
-        console.log('PB marker approach failed, trying consecutive grouping...');
+        console.log('PB marker approach found 0 plays, trying consecutive grouping...');
 
-        for (let i = 0; i <= validNums.length - 6; i++) {
-            const group = validNums.slice(i, i + 6);
-            const whiteBalls = group.slice(0, 5);
-            const uniqueWhite = new Set(whiteBalls);
+        const allNumbers = text.match(/\d+/g);
+        if (allNumbers) {
+            const nums = allNumbers.map(n => parseInt(n));
+            const validNums = nums.filter(n => n >= 1 && n <= 69);
 
-            if (uniqueWhite.size === 5) {
-                const powerball = group[5];
+            console.log(`Valid numbers: ${validNums.join(', ')}`);
 
-                if (powerball >= 1 && powerball <= 26) {
-                    const play = {
-                        white: whiteBalls.sort((a, b) => a - b),
-                        powerball: powerball
-                    };
+            for (let i = 0; i <= validNums.length - 6; i++) {
+                const group = validNums.slice(i, i + 6);
+                const whiteBalls = group.slice(0, 5);
+                const uniqueWhite = new Set(whiteBalls);
 
-                    const isDuplicate = plays.some(p =>
-                        JSON.stringify(p.white) === JSON.stringify(play.white) &&
-                        p.powerball === play.powerball
-                    );
+                if (uniqueWhite.size === 5) {
+                    const powerball = group[5];
 
-                    if (!isDuplicate) {
-                        console.log(`Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
-                        plays.push(play);
-                        i += 5;
+                    if (powerball >= 1 && powerball <= 26) {
+                        const play = {
+                            white: whiteBalls.sort((a, b) => a - b),
+                            powerball: powerball
+                        };
+
+                        const isDuplicate = plays.some(p =>
+                            JSON.stringify(p.white) === JSON.stringify(play.white) &&
+                            p.powerball === play.powerball
+                        );
+
+                        if (!isDuplicate) {
+                            console.log(`Found play: ${play.white.join(', ')} + PB ${play.powerball}`);
+                            plays.push(play);
+                            i += 5;
+                        }
                     }
                 }
             }
