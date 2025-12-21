@@ -127,7 +127,7 @@
         <!-- Footer -->
         <footer class="app-footer">
             <p>
-                <span class="version">v<span id="app-version">2.7</span></span>
+                <span class="version">v<span id="app-version">2.8</span></span>
                 <span class="separator">•</span>
                 <span class="session-time">Session: <span id="session-time">December 18, 2024</span></span>
             </p>
@@ -174,8 +174,27 @@
                 document.body.appendChild(script);
             }
         };
+
+        // Load OpenCV.js with fallback
+        (function() {
+            const script = document.createElement('script');
+            script.async = true;
+            script.src = 'opencv.js'; // Try local first
+
+            script.onerror = function() {
+                console.log('⚠ Local opencv.js failed, loading from CDN...');
+                const fallback = document.createElement('script');
+                fallback.async = true;
+                fallback.src = 'https://docs.opencv.org/4.x/opencv.js';
+                fallback.onerror = function() {
+                    console.error('✗ Failed to load OpenCV.js from both local and CDN');
+                };
+                document.head.appendChild(fallback);
+            };
+
+            document.head.appendChild(script);
+        })();
     </script>
-    <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
     <script src="powerball-data.js"></script>
 </body>

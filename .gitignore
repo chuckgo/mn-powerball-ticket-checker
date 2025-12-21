@@ -6,7 +6,6 @@ test-output.txt
 *.temp.jpg
 *.preprocessed.jpg
 *.traineddata
-opencv.js
 test-results.txt
 pipeline_output/
 pipeline_profile.json
