@@ -860,7 +860,7 @@ function extractNumbersTemplateMatching(imageElement) {
     }
 
     try {
-        // Convert image to OpenCV Mat
+        // Step 1: Load and convert to grayscale
         const canvas = document.createElement('canvas');
         canvas.width = imageElement.naturalWidth || imageElement.width;
         canvas.height = imageElement.naturalHeight || imageElement.height;
@@ -871,35 +871,41 @@ function extractNumbersTemplateMatching(imageElement) {
         const gray = new cv.Mat();
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-        // Apply morphological closing to connect broken parts
+        // Step 2: Apply Otsu's binarization (matches Python pipeline)
+        const binary = new cv.Mat();
+        cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+        console.log('Applied Otsu binarization');
+
+        // Step 3: Apply morphological closing to connect broken parts
         const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-        const grayClosed = new cv.Mat();
-        cv.morphologyEx(gray, grayClosed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
+        const binaryClosed = new cv.Mat();
+        cv.morphologyEx(binary, binaryClosed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
 
-        console.log(`Processing ${gray.rows}px tall image...`);
+        console.log(`Processing ${binary.rows}px tall image...`);
 
-        // Step 1: Find all PB markers
+        // Step 4: Find all PB markers
         console.log('Detecting PB markers...');
-        const pbMarkers = findPBMarkers(grayClosed);
+        const pbMarkers = findPBMarkers(binaryClosed);
         console.log(`Found ${pbMarkers.length} PB markers`);
 
-        // Step 2: Detect ALL digits
+        // Step 5: Detect ALL digits
         console.log('Detecting all digits...');
-        const allDigits = findAllDigits(grayClosed);
+        const allDigits = findAllDigits(binaryClosed);
         console.log(`Matched ${allDigits.length} digits`);
 
-        // Step 3: Group digits by Y coordinate
+        // Step 6: Group digits by Y coordinate
         console.log('Grouping digits into rows...');
         const digitRows = groupDigitsByY(allDigits);
         console.log(`Grouped into ${digitRows.length} rows`);
 
-        // Step 4: Process each row to extract plays
+        // Step 7: Process each row to extract plays
         const plays = extractPlaysFromRows(digitRows, pbMarkers, appState.pbTemplate);
 
         // Cleanup
         src.delete();
         gray.delete();
-        grayClosed.delete();
+        binary.delete();
+        binaryClosed.delete();
         kernel.delete();
 
         console.log(`Total plays extracted: ${plays.length}`);
