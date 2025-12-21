@@ -43,28 +43,46 @@ function initializeApp() {
 async function loadDigitTemplates() {
     console.log('Loading digit templates...');
 
+    if (typeof cv === 'undefined') {
+        console.error('✗ OpenCV.js not loaded, cannot load templates');
+        return;
+    }
+
     try {
+        let loadedCount = 0;
+
         // Load digit templates 0-9
         for (let i = 0; i <= 9; i++) {
             const img = await loadImageAsCanvas(`digit_templates/digit_${i}.png`);
-            if (img && typeof cv !== 'undefined') {
+            if (img) {
                 appState.digitTemplates[i] = cv.imread(img);
-                // Convert to grayscale
                 cv.cvtColor(appState.digitTemplates[i], appState.digitTemplates[i], cv.COLOR_RGBA2GRAY);
+                loadedCount++;
+            } else {
+                console.error(`✗ Failed to load digit_${i}.png`);
             }
         }
 
         // Load PB marker template
         const pbImg = await loadImageAsCanvas('digit_templates/marker_pb.png');
-        if (pbImg && typeof cv !== 'undefined') {
+        if (pbImg) {
             appState.pbTemplate = cv.imread(pbImg);
             cv.cvtColor(appState.pbTemplate, appState.pbTemplate, cv.COLOR_RGBA2GRAY);
+            loadedCount++;
+            console.log('✓ PB marker template loaded');
+        } else {
+            console.error('✗ Failed to load marker_pb.png');
         }
 
-        appState.templatesLoaded = true;
-        console.log('✓ Templates loaded successfully');
+        if (loadedCount === 11) {
+            appState.templatesLoaded = true;
+            console.log(`✓ All templates loaded successfully (${loadedCount}/11)`);
+        } else {
+            console.warn(`⚠ Only ${loadedCount}/11 templates loaded, template matching may fail`);
+            appState.templatesLoaded = loadedCount >= 10; // Allow if at least digits loaded
+        }
     } catch (error) {
-        console.error('Error loading templates:', error);
+        console.error('✗ Error loading templates:', error);
         console.log('⚠ Template matching will not be available, falling back to OCR');
     }
 }
@@ -78,10 +96,11 @@ function loadImageAsCanvas(src) {
             canvas.height = img.height;
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0);
+            console.log(`✓ Loaded: ${src}`);
             resolve(canvas);
         };
-        img.onerror = () => {
-            console.warn(`Failed to load template: ${src}`);
+        img.onerror = (error) => {
+            console.error(`✗ Failed to load: ${src}`, error);
             resolve(null);
         };
         img.src = src;
@@ -1455,7 +1474,7 @@ function extractPlaysFromRows(digitRows, pbMarkers, pbTemplate) {
 }
 
 function extractNumbersFromOCR(text) {
-    console.log('OCR Text:', text);
+    // Fallback OCR extraction (only used when template matching fails)
 
     // NOTE: This is the fallback OCR-based extraction.
     // The primary method is template matching (extractNumbersTemplateMatching).
@@ -1632,8 +1651,6 @@ function extractPlayFromNumbers(numbers) {
 
 // Extract drawing date from OCR text
 function extractDrawingDate(text) {
-    console.log('Extracting date from text:', text);
-
     // Look for various date patterns
     const datePatterns = [
         // Weekday Month DD YY (e.g., "Mon Dec 15 25" or "MON DEC 15 25")
@@ -1684,16 +1701,15 @@ function extractDrawingDate(text) {
                 // Validate date
                 if (month >= 1 && month <= 12 && day >= 1 && day <= 31 && year >= 2020 && year <= 2030) {
                     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                    console.log('Extracted date:', dateStr);
+                    console.log(`✓ Extracted date: ${dateStr}`);
                     return dateStr;
                 }
             } catch (e) {
-                console.error('Date parsing error:', e);
+                // Silently continue to next pattern
             }
         }
     }
 
-    console.log('No date found');
     return null;
 }
 
