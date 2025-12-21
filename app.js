@@ -288,6 +288,14 @@ async function handleFileUpload(event) {
 
     if (isHEIC) {
         console.log('HEIC file detected, converting to JPEG...');
+
+        // Check if heic2any is available
+        if (typeof heic2any === 'undefined') {
+            alert('HEIC conversion library not loaded.\n\nPlease convert your HEIC image to JPEG first using:\n• Windows Photos app\n• Online converter (heictojpg.com)\n• iPhone: Share → Save as File → Options → JPEG');
+            event.target.value = '';
+            return;
+        }
+
         try {
             // Show loading indicator
             const processingIndicator = document.getElementById('processing-indicator');
@@ -309,8 +317,19 @@ async function handleFileUpload(event) {
             processingIndicator.style.display = 'none';
         } catch (error) {
             console.error('HEIC conversion error:', error);
-            alert('Failed to convert HEIC image. Please try converting to JPEG first.');
+
+            // Show helpful error message
+            const errorMsg = error.code === 2
+                ? 'HEIC format not supported in your browser.\n\nPlease convert to JPEG first using:\n• Windows Photos app (Open image → Save As → JPEG)\n• Online converter: heictojpg.com\n• iPhone: Share → Save as File → Options → Most Compatible (JPEG)'
+                : 'Failed to convert HEIC image.\n\nPlease try converting to JPEG first.';
+
+            alert(errorMsg);
             event.target.value = '';
+
+            // Hide processing indicator
+            const processingIndicator = document.getElementById('processing-indicator');
+            processingIndicator.style.display = 'none';
+
             return;
         }
     }
