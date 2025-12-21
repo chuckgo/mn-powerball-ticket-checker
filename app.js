@@ -8,7 +8,10 @@ const appState = {
     ticketPlays: [],
     currentEditIndex: null,
     cameraStream: null,
-    extractedDate: null
+    extractedDate: null,
+    digitTemplates: {},  // Will hold loaded digit templates (0-9)
+    pbTemplate: null,    // Will hold loaded PB marker template
+    templatesLoaded: false
 };
 
 // Initialize app when DOM is loaded
@@ -31,7 +34,58 @@ function initializeApp() {
     // Update footer with current date/time to show latest version
     updateFooter();
 
+    // Load digit templates for template matching
+    loadDigitTemplates();
+
     console.log('App initialized');
+}
+
+async function loadDigitTemplates() {
+    console.log('Loading digit templates...');
+
+    try {
+        // Load digit templates 0-9
+        for (let i = 0; i <= 9; i++) {
+            const img = await loadImageAsCanvas(`digit_templates/digit_${i}.png`);
+            if (img && typeof cv !== 'undefined') {
+                appState.digitTemplates[i] = cv.imread(img);
+                // Convert to grayscale
+                cv.cvtColor(appState.digitTemplates[i], appState.digitTemplates[i], cv.COLOR_RGBA2GRAY);
+            }
+        }
+
+        // Load PB marker template
+        const pbImg = await loadImageAsCanvas('digit_templates/marker_pb.png');
+        if (pbImg && typeof cv !== 'undefined') {
+            appState.pbTemplate = cv.imread(pbImg);
+            cv.cvtColor(appState.pbTemplate, appState.pbTemplate, cv.COLOR_RGBA2GRAY);
+        }
+
+        appState.templatesLoaded = true;
+        console.log('✓ Templates loaded successfully');
+    } catch (error) {
+        console.error('Error loading templates:', error);
+        console.log('⚠ Template matching will not be available, falling back to OCR');
+    }
+}
+
+function loadImageAsCanvas(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas);
+        };
+        img.onerror = () => {
+            console.warn(`Failed to load template: ${src}`);
+            resolve(null);
+        };
+        img.src = src;
+    });
 }
 
 function updateFooter() {
@@ -727,40 +781,63 @@ async function processTicketImage() {
     // Show processing indicator
     imageControls.style.display = 'none';
     processingIndicator.style.display = 'block';
-    processingIndicator.innerHTML = '<p>Analyzing image (trying multiple angles and settings)...</p>';
+    processingIndicator.innerHTML = '<p>Analyzing image with template matching...</p>';
 
     try {
-        // Use multi-attempt OCR with rotation and PSM modes
-        const bestResult = await multiAttemptOCR(image);
+        let extractedPlays = null;
+        let extractedDate = null;
+        let useOCRFallback = false;
 
-        if (!bestResult || bestResult.plays.length === 0) {
-            alert('Could not detect any numbers. Please enter manually or try a clearer photo.');
-            processingIndicator.style.display = 'none';
-            imageControls.style.display = 'flex';
-            return;
+        // Try template matching first
+        if (appState.templatesLoaded && typeof cv !== 'undefined') {
+            console.log('Attempting template matching...');
+            extractedPlays = extractNumbersTemplateMatching(image);
+
+            if (extractedPlays && extractedPlays.length > 0) {
+                console.log(`✓ Template matching succeeded: ${extractedPlays.length} plays found`);
+            } else {
+                console.log('Template matching found no plays, falling back to OCR');
+                useOCRFallback = true;
+            }
+        } else {
+            console.log('Templates not available, using OCR');
+            useOCRFallback = true;
         }
 
-        // Extract date from the best result
-        const extractedDate = extractDrawingDate(bestResult.text);
+        // Fall back to OCR if template matching failed or not available
+        if (useOCRFallback) {
+            processingIndicator.innerHTML = '<p>Analyzing image with OCR (trying multiple angles)...</p>';
+            const bestResult = await multiAttemptOCR(image);
 
-        // Assess image quality with best result
-        const qualityIssues = assessImageQuality(
-            { data: { confidence: bestResult.confidence, text: bestResult.text } },
-            bestResult.plays
-        );
-
-        // Show warning if quality is still poor
-        if (qualityIssues.hasIssues) {
-            const shouldContinue = showImageQualityWarning(qualityIssues.issues, bestResult.confidence);
-            if (!shouldContinue) {
+            if (!bestResult || bestResult.plays.length === 0) {
+                alert('Could not detect any numbers. Please enter manually or try a clearer photo.');
                 processingIndicator.style.display = 'none';
                 imageControls.style.display = 'flex';
-                return; // User chose to retake
+                return;
+            }
+
+            extractedPlays = bestResult.plays;
+            extractedDate = extractDrawingDate(bestResult.text);
+
+            // Assess image quality with OCR result
+            const qualityIssues = assessImageQuality(
+                { data: { confidence: bestResult.confidence, text: bestResult.text } },
+                bestResult.plays
+            );
+
+            // Show warning if quality is poor
+            if (qualityIssues.hasIssues) {
+                const shouldContinue = showImageQualityWarning(qualityIssues.issues, bestResult.confidence);
+                if (!shouldContinue) {
+                    processingIndicator.style.display = 'none';
+                    imageControls.style.display = 'flex';
+                    return;
+                }
             }
         }
 
         // Add extracted plays to state
-        appState.ticketPlays = bestResult.plays;
+        appState.ticketPlays = extractedPlays;
         appState.extractedDate = extractedDate;
 
         // Hide camera stuff and show plays
@@ -773,31 +850,376 @@ async function processTicketImage() {
         }
 
     } catch (error) {
-        console.error('OCR error:', error);
+        console.error('Processing error:', error);
         alert('Error processing image. Please try again or enter manually.');
         processingIndicator.style.display = 'none';
         imageControls.style.display = 'flex';
     }
 }
 
+function extractNumbersTemplateMatching(imageElement) {
+    console.log('Using template matching extraction...');
+
+    if (!appState.templatesLoaded || typeof cv === 'undefined') {
+        console.log('Templates not loaded, falling back to OCR');
+        return null;
+    }
+
+    try {
+        // Convert image to OpenCV Mat
+        const canvas = document.createElement('canvas');
+        canvas.width = imageElement.naturalWidth || imageElement.width;
+        canvas.height = imageElement.naturalHeight || imageElement.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(imageElement, 0, 0);
+
+        const src = cv.imread(canvas);
+        const gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+        // Apply morphological closing to connect broken parts
+        const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+        const grayClosed = new cv.Mat();
+        cv.morphologyEx(gray, grayClosed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
+
+        console.log(`Processing ${gray.rows}px tall image...`);
+
+        // Step 1: Find all PB markers
+        console.log('Detecting PB markers...');
+        const pbMarkers = findPBMarkers(grayClosed);
+        console.log(`Found ${pbMarkers.length} PB markers`);
+
+        // Step 2: Detect ALL digits
+        console.log('Detecting all digits...');
+        const allDigits = findAllDigits(grayClosed);
+        console.log(`Matched ${allDigits.length} digits`);
+
+        // Step 3: Group digits by Y coordinate
+        console.log('Grouping digits into rows...');
+        const digitRows = groupDigitsByY(allDigits);
+        console.log(`Grouped into ${digitRows.length} rows`);
+
+        // Step 4: Process each row to extract plays
+        const plays = extractPlaysFromRows(digitRows, pbMarkers, appState.pbTemplate);
+
+        // Cleanup
+        src.delete();
+        gray.delete();
+        grayClosed.delete();
+        kernel.delete();
+
+        console.log(`Total plays extracted: ${plays.length}`);
+        return plays;
+
+    } catch (error) {
+        console.error('Template matching error:', error);
+        return null;
+    }
+}
+
+function findPBMarkers(grayMat) {
+    const pbMarkers = [];
+
+    if (!appState.pbTemplate ||
+        grayMat.rows < appState.pbTemplate.rows ||
+        grayMat.cols < appState.pbTemplate.cols) {
+        console.log('Cannot perform PB template matching');
+        return pbMarkers;
+    }
+
+    const result = new cv.Mat();
+    cv.matchTemplate(grayMat, appState.pbTemplate, result, cv.TM_CCOEFF_NORMED);
+
+    const threshold = 0.75;
+
+    // Find all matches above threshold
+    const candidates = [];
+    for (let y = 0; y < result.rows; y++) {
+        for (let x = 0; x < result.cols; x++) {
+            const confidence = result.floatAt(y, x);
+            if (confidence >= threshold) {
+                candidates.push({ x, y, confidence });
+            }
+        }
+    }
+
+    // Apply non-maximum suppression
+    candidates.sort((a, b) => b.confidence - a.confidence);
+    for (const candidate of candidates) {
+        let isDuplicate = false;
+        for (const marker of pbMarkers) {
+            if (Math.abs(candidate.x - marker.x) < 30 && Math.abs(candidate.y - marker.y) < 30) {
+                isDuplicate = true;
+                break;
+            }
+        }
+        if (!isDuplicate) {
+            pbMarkers.push(candidate);
+        }
+    }
+
+    pbMarkers.sort((a, b) => a.y - b.y);
+    result.delete();
+
+    return pbMarkers;
+}
+
+function matchDigitTemplate(digitMat) {
+    let bestMatch = null;
+    let bestScore = 0.0;
+
+    // Try each digit template with multiple scales
+    const scales = [0.85, 0.925, 1.0, 1.075, 1.15];
+
+    for (let digit = 0; digit <= 9; digit++) {
+        const template = appState.digitTemplates[digit];
+        if (!template) continue;
+
+        let digitBestScore = 0.0;
+
+        for (const scale of scales) {
+            try {
+                // Scale the template
+                const scaledTemplate = new cv.Mat();
+                const dsize = new cv.Size(
+                    Math.round(template.cols * scale),
+                    Math.round(template.rows * scale)
+                );
+                cv.resize(template, scaledTemplate, dsize);
+
+                // Resize digit to match template
+                const resized = new cv.Mat();
+                const targetSize = new cv.Size(scaledTemplate.cols, scaledTemplate.rows);
+                cv.resize(digitMat, resized, targetSize);
+
+                // Match
+                const result = new cv.Mat();
+                cv.matchTemplate(resized, scaledTemplate, result, cv.TM_CCOEFF_NORMED);
+                const score = result.floatAt(0, 0);
+
+                if (score > digitBestScore) {
+                    digitBestScore = score;
+                }
+
+                scaledTemplate.delete();
+                resized.delete();
+                result.delete();
+            } catch (e) {
+                continue;
+            }
+        }
+
+        if (digitBestScore > bestScore) {
+            bestScore = digitBestScore;
+            bestMatch = digit;
+        }
+    }
+
+    // Require minimum confidence
+    if (bestScore < 0.4) {
+        return { digit: null, confidence: bestScore };
+    }
+
+    return { digit: bestMatch, confidence: bestScore };
+}
+
+function findAllDigits(grayMat) {
+    const allDigits = [];
+
+    // Find contours
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(grayMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    // Filter by size
+    const minHeight = 30;
+    const minWidth = 15;
+    const maxWidth = 90;
+    const minArea = 800;
+    const maxArea = 6000;
+
+    for (let i = 0; i < contours.size(); i++) {
+        const contour = contours.get(i);
+        const rect = cv.boundingRect(contour);
+        const area = cv.contourArea(contour);
+
+        if (rect.height >= minHeight && rect.width >= minWidth && rect.width <= maxWidth &&
+            area >= minArea && area <= maxArea) {
+
+            // Extract digit region
+            const digitROI = grayMat.roi(rect);
+
+            // Match against templates
+            const match = matchDigitTemplate(digitROI);
+
+            if (match.digit !== null) {
+                const centerY = rect.y + Math.floor(rect.height / 2);
+                allDigits.push({
+                    x: rect.x,
+                    y: centerY,
+                    digit: match.digit,
+                    confidence: match.confidence
+                });
+            }
+
+            digitROI.delete();
+        }
+    }
+
+    contours.delete();
+    hierarchy.delete();
+
+    return allDigits;
+}
+
+function groupDigitsByY(allDigits) {
+    if (allDigits.length === 0) return [];
+
+    // Sort by Y position
+    allDigits.sort((a, b) => a.y - b.y);
+
+    const digitRows = [];
+    let currentRow = [allDigits[0]];
+
+    for (let i = 1; i < allDigits.length; i++) {
+        const prevY = currentRow[0].y;
+        const currY = allDigits[i].y;
+
+        // If within 40px vertically, same row
+        if (Math.abs(currY - prevY) <= 40) {
+            currentRow.push(allDigits[i]);
+        } else {
+            digitRows.push(currentRow);
+            currentRow = [allDigits[i]];
+        }
+    }
+
+    if (currentRow.length > 0) {
+        digitRows.push(currentRow);
+    }
+
+    return digitRows;
+}
+
+function reconstructTwoDigitNumbers(digitsList) {
+    if (digitsList.length === 0) return [];
+
+    // Sort by X position
+    digitsList.sort((a, b) => a.x - b.x);
+
+    const numbers = [];
+    let i = 0;
+
+    while (i < digitsList.length) {
+        if (i + 1 < digitsList.length) {
+            const x1 = digitsList[i].x;
+            const x2 = digitsList[i + 1].x;
+
+            // If digits are close (within 110px), they form a 2-digit number
+            if (x2 - x1 < 110) {
+                const number = digitsList[i].digit * 10 + digitsList[i + 1].digit;
+                numbers.push(number);
+                i += 2;
+                continue;
+            }
+        }
+
+        // Single digit (shouldn't happen but handle it)
+        numbers.push(digitsList[i].digit);
+        i++;
+    }
+
+    return numbers;
+}
+
+function extractPlaysFromRows(digitRows, pbMarkers, pbTemplate) {
+    const plays = [];
+    let validPlayNumber = 1;
+
+    const pbW = pbTemplate ? pbTemplate.cols : 90;
+    const pbH = pbTemplate ? pbTemplate.rows : 88;
+
+    for (let rowIdx = 0; rowIdx < digitRows.length; rowIdx++) {
+        const digitRow = digitRows[rowIdx];
+        digitRow.sort((a, b) => a.x - b.x);
+
+        // Get average Y for this row
+        const avgY = digitRow.reduce((sum, d) => sum + d.y, 0) / digitRow.length;
+
+        // Find closest PB marker
+        let closestPB = null;
+        let minDist = Infinity;
+
+        for (const pb of pbMarkers) {
+            const pbCenterY = pb.y + Math.floor(pbH / 2);
+            const dist = Math.abs(pbCenterY - avgY);
+            if (dist < minDist) {
+                minDist = dist;
+                closestPB = pb;
+            }
+        }
+
+        if (!closestPB) {
+            console.log(`Row ${rowIdx + 1}: No PB marker found, skipping`);
+            continue;
+        }
+
+        const pbX = closestPB.x;
+        console.log(`Row ${rowIdx + 1}: ${digitRow.length} digits at y≈${avgY.toFixed(0)}, PB at x=${pbX}`);
+
+        // Separate digits by PB marker
+        const beforePB = digitRow.filter(d => d.x < pbX);
+        const afterPB = digitRow.filter(d => d.x > pbX + pbW);
+
+        beforePB.sort((a, b) => a.x - b.x);
+        afterPB.sort((a, b) => a.x - b.x);
+
+        // Take last 10 digits before PB, first 2 after PB
+        const whiteBallDigits = beforePB.slice(-10);
+        const powerballDigits = afterPB.slice(0, 2);
+
+        console.log(`  Before PB: ${beforePB.length} total, using last 10`);
+        console.log(`  After PB: ${afterPB.length} total, using first 2`);
+
+        // Reconstruct 2-digit numbers
+        const whiteBalls = reconstructTwoDigitNumbers(whiteBallDigits);
+        const powerballNumbers = reconstructTwoDigitNumbers(powerballDigits);
+        const powerball = powerballNumbers.length > 0 ? powerballNumbers[0] : null;
+
+        // Validate play
+        const isValid = whiteBalls.length === 5 &&
+                       powerball !== null &&
+                       powerball >= 1 && powerball <= 26 &&
+                       whiteBalls.every(n => n >= 1 && n <= 69);
+
+        if (isValid) {
+            console.log(`  ✓ VALID PLAY ${validPlayNumber}: White=${whiteBalls}, PB=${powerball}`);
+            plays.push({
+                white: whiteBalls.sort((a, b) => a - b),
+                powerball: powerball
+            });
+            validPlayNumber++;
+        } else {
+            console.log(`  → Incomplete/Invalid: ${whiteBalls.length} white balls, PB=${powerball}`);
+        }
+    }
+
+    return plays;
+}
+
 function extractNumbersFromOCR(text) {
     console.log('OCR Text:', text);
 
-    // NOTE: This uses OCR-based extraction. For better accuracy, see ocr_pipeline_prototype.py
-    // which uses template matching to detect individual digits and group them by position.
+    // NOTE: This is the fallback OCR-based extraction.
+    // The primary method is template matching (extractNumbersTemplateMatching).
     //
-    // Python pipeline approach:
+    // Template matching approach:
     // 1. Detect all PB markers first using template matching
     // 2. Detect all individual digits in the image
     // 3. Group digits by Y coordinate into rows
     // 4. For each row: take last 10 digits before PB (5 two-digit numbers)
     //                  take first 2 digits after PB (powerball)
     // 5. Pair adjacent digits within 110px into 2-digit numbers
-    //
-    // Web app approach (current):
-    // - Uses Tesseract OCR to extract text
-    // - Parses text line-by-line to find number sequences
-    // - Uses PB marker in text to separate white balls from powerball
 
     // Pre-process OCR text to fix common errors
     // Fix common PB variations (MB, KB, B with number after, m with number)
