@@ -265,9 +265,15 @@ function handleFileUpload(event) {
         const capturedImage = document.getElementById('captured-image');
         capturedImage.src = e.target.result;
 
-        // Hide scan options and show image
+        // Reset UI state for new image
         document.querySelector('.scan-options').style.display = 'none';
         document.getElementById('captured-image-container').style.display = 'block';
+        document.querySelector('.image-controls').style.display = 'flex';
+        document.getElementById('processing-indicator').style.display = 'none';
+        document.getElementById('ticket-plays-container').style.display = 'none';
+
+        // Clear file input so same file can be selected again
+        event.target.value = '';
     };
     reader.readAsDataURL(file);
 }
@@ -332,7 +338,8 @@ function captureImage() {
 
 function retakePhoto() {
     document.getElementById('captured-image-container').style.display = 'none';
-    startCamera();
+    document.getElementById('ticket-plays-container').style.display = 'none';
+    document.querySelector('.scan-options').style.display = 'flex';
 }
 
 function assessImageQuality(ocrResult, extractedPlays) {
@@ -804,7 +811,7 @@ async function processTicketImage() {
         // Fall back to basic OCR only if template matching completely failed
         if (!extractedPlays || extractedPlays.length === 0) {
             console.log('Falling back to OCR...');
-            processingIndicator.innerHTML = '<p>Trying OCR extraction...</p>';
+            processingIndicator.innerHTML = '<p>Template matching failed, trying fallback extraction...</p>';
 
             const ocrResult = await Tesseract.recognize(
                 image,
@@ -813,7 +820,7 @@ async function processTicketImage() {
                     logger: m => {
                         if (m.status === 'recognizing text') {
                             const progress = Math.round(m.progress * 100);
-                            processingIndicator.innerHTML = `<p>OCR processing: ${progress}%</p>`;
+                            processingIndicator.innerHTML = `<p>Fallback extraction: ${progress}%</p>`;
                         }
                     }
                 }
