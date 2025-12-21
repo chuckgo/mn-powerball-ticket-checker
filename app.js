@@ -256,9 +256,45 @@ function setupTicketScanning() {
     });
 }
 
-function handleFileUpload(event) {
+async function handleFileUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
+
+    // Check if file is HEIC/HEIF format
+    const isHEIC = file.type === 'image/heic' || file.type === 'image/heif' ||
+                   file.name.toLowerCase().endsWith('.heic') ||
+                   file.name.toLowerCase().endsWith('.heif');
+
+    let processedFile = file;
+
+    if (isHEIC) {
+        console.log('HEIC file detected, converting to JPEG...');
+        try {
+            // Show loading indicator
+            const processingIndicator = document.getElementById('processing-indicator');
+            processingIndicator.style.display = 'block';
+            processingIndicator.innerHTML = '<p>Converting HEIC image...</p>';
+
+            // Convert HEIC to JPEG using heic2any
+            const convertedBlob = await heic2any({
+                blob: file,
+                toType: 'image/jpeg',
+                quality: 0.9
+            });
+
+            // Handle array of blobs (heic2any might return array)
+            const blob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+            processedFile = new File([blob], file.name.replace(/\.heic$/i, '.jpg'), { type: 'image/jpeg' });
+
+            console.log('✓ HEIC converted to JPEG');
+            processingIndicator.style.display = 'none';
+        } catch (error) {
+            console.error('HEIC conversion error:', error);
+            alert('Failed to convert HEIC image. Please try converting to JPEG first.');
+            event.target.value = '';
+            return;
+        }
+    }
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -275,7 +311,7 @@ function handleFileUpload(event) {
         // Clear file input so same file can be selected again
         event.target.value = '';
     };
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(processedFile);
 }
 
 async function startCamera() {
