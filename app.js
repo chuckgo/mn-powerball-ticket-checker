@@ -781,58 +781,52 @@ async function processTicketImage() {
     // Show processing indicator
     imageControls.style.display = 'none';
     processingIndicator.style.display = 'block';
-    processingIndicator.innerHTML = '<p>Analyzing image with template matching...</p>';
+    processingIndicator.innerHTML = '<p>Processing ticket image...</p>';
 
     try {
         let extractedPlays = null;
         let extractedDate = null;
-        let useOCRFallback = false;
 
-        // Try template matching first
+        // Pipeline: Template matching first (matches Python implementation)
         if (appState.templatesLoaded && typeof cv !== 'undefined') {
-            console.log('Attempting template matching...');
+            console.log('Processing with template matching pipeline...');
             extractedPlays = extractNumbersTemplateMatching(image);
 
             if (extractedPlays && extractedPlays.length > 0) {
                 console.log(`✓ Template matching succeeded: ${extractedPlays.length} plays found`);
             } else {
-                console.log('Template matching found no plays, falling back to OCR');
-                useOCRFallback = true;
+                console.log('⚠ Template matching found no plays');
             }
         } else {
-            console.log('Templates not available, using OCR');
-            useOCRFallback = true;
+            console.log('⚠ Templates not loaded, template matching unavailable');
         }
 
-        // Fall back to OCR if template matching failed or not available
-        if (useOCRFallback) {
-            processingIndicator.innerHTML = '<p>Analyzing image with OCR (trying multiple angles)...</p>';
-            const bestResult = await multiAttemptOCR(image);
+        // Fall back to basic OCR only if template matching completely failed
+        if (!extractedPlays || extractedPlays.length === 0) {
+            console.log('Falling back to OCR...');
+            processingIndicator.innerHTML = '<p>Trying OCR extraction...</p>';
 
-            if (!bestResult || bestResult.plays.length === 0) {
-                alert('Could not detect any numbers. Please enter manually or try a clearer photo.');
+            const ocrResult = await Tesseract.recognize(
+                image,
+                'eng',
+                {
+                    logger: m => {
+                        if (m.status === 'recognizing text') {
+                            const progress = Math.round(m.progress * 100);
+                            processingIndicator.innerHTML = `<p>OCR processing: ${progress}%</p>`;
+                        }
+                    }
+                }
+            );
+
+            extractedPlays = extractNumbersFromOCR(ocrResult.data.text);
+            extractedDate = extractDrawingDate(ocrResult.data.text);
+
+            if (!extractedPlays || extractedPlays.length === 0) {
+                alert('Could not detect any plays. Please enter manually or try a clearer photo.');
                 processingIndicator.style.display = 'none';
                 imageControls.style.display = 'flex';
                 return;
-            }
-
-            extractedPlays = bestResult.plays;
-            extractedDate = extractDrawingDate(bestResult.text);
-
-            // Assess image quality with OCR result
-            const qualityIssues = assessImageQuality(
-                { data: { confidence: bestResult.confidence, text: bestResult.text } },
-                bestResult.plays
-            );
-
-            // Show warning if quality is poor
-            if (qualityIssues.hasIssues) {
-                const shouldContinue = showImageQualityWarning(qualityIssues.issues, bestResult.confidence);
-                if (!shouldContinue) {
-                    processingIndicator.style.display = 'none';
-                    imageControls.style.display = 'flex';
-                    return;
-                }
             }
         }
 
