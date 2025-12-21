@@ -25,24 +25,34 @@ if (document.readyState === 'loading') {
 }
 
 function initializeApp() {
-    // Set up event listeners
-    setupTabSwitching();
-    setupWinningNumbersInput();
-    setupTicketScanning();
-    setupPlayModal();
-    setupResults();
+    console.log('Initializing app...');
 
-    // Set today's date as default
-    const today = new Date().toISOString().split('T')[0];
-    document.getElementById('drawing-date').value = today;
+    try {
+        // Set up event listeners (critical - must work even if templates fail)
+        setupTabSwitching();
+        setupWinningNumbersInput();
+        setupTicketScanning();
+        setupPlayModal();
+        setupResults();
+        console.log('✓ Event listeners set up');
 
-    // Update footer with current date/time to show latest version
-    updateFooter();
+        // Set today's date as default
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('drawing-date').value = today;
 
-    // Load digit templates for template matching
-    loadDigitTemplates();
+        // Update footer with current date/time to show latest version
+        updateFooter();
 
-    console.log('App initialized');
+        // Load digit templates for template matching (non-blocking)
+        loadDigitTemplates().catch(err => {
+            console.error('Template loading failed, will use OCR fallback:', err);
+        });
+
+        console.log('✓ App initialized');
+    } catch (error) {
+        console.error('Error during app initialization:', error);
+        // Even if initialization partially fails, log it but continue
+    }
 }
 
 async function loadDigitTemplates() {

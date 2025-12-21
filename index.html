@@ -127,7 +127,7 @@
         <!-- Footer -->
         <footer class="app-footer">
             <p>
-                <span class="version">v<span id="app-version">2.9</span></span>
+                <span class="version">v<span id="app-version">3.0</span></span>
                 <span class="separator">•</span>
                 <span class="session-time">Session: <span id="session-time">December 18, 2024</span></span>
             </p>
@@ -168,12 +168,27 @@
         var Module = {
             onRuntimeInitialized: function() {
                 console.log('✓ OpenCV.js loaded and ready');
-                // Load app.js after OpenCV is ready
-                const script = document.createElement('script');
-                script.src = 'app.js';
-                document.body.appendChild(script);
+                loadAppScript();
             }
         };
+
+        // Load app.js (with timeout fallback if OpenCV takes too long)
+        function loadAppScript() {
+            const script = document.createElement('script');
+            script.src = 'app.js';
+            script.onerror = function() {
+                console.error('✗ Failed to load app.js');
+            };
+            document.body.appendChild(script);
+        }
+
+        // Fallback: Load app even if OpenCV doesn't initialize within 10 seconds
+        setTimeout(function() {
+            if (typeof cv === 'undefined') {
+                console.warn('⚠ OpenCV.js not loaded after 10s, loading app anyway (will use OCR only)');
+                loadAppScript();
+            }
+        }, 10000);
 
         // Load OpenCV.js with fallback
         (function() {
@@ -187,7 +202,7 @@
                 fallback.async = true;
                 fallback.src = 'https://docs.opencv.org/4.x/opencv.js';
                 fallback.onerror = function() {
-                    console.error('✗ Failed to load OpenCV.js from both local and CDN');
+                    console.error('✗ Failed to load OpenCV.js from both local and CDN, app will use OCR only');
                 };
                 document.head.appendChild(fallback);
             };
