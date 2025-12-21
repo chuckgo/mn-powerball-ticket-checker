@@ -783,6 +783,22 @@ async function processTicketImage() {
 function extractNumbersFromOCR(text) {
     console.log('OCR Text:', text);
 
+    // NOTE: This uses OCR-based extraction. For better accuracy, see ocr_pipeline_prototype.py
+    // which uses template matching to detect individual digits and group them by position.
+    //
+    // Python pipeline approach:
+    // 1. Detect all PB markers first using template matching
+    // 2. Detect all individual digits in the image
+    // 3. Group digits by Y coordinate into rows
+    // 4. For each row: take last 10 digits before PB (5 two-digit numbers)
+    //                  take first 2 digits after PB (powerball)
+    // 5. Pair adjacent digits within 110px into 2-digit numbers
+    //
+    // Web app approach (current):
+    // - Uses Tesseract OCR to extract text
+    // - Parses text line-by-line to find number sequences
+    // - Uses PB marker in text to separate white balls from powerball
+
     // Pre-process OCR text to fix common errors
     // Fix common PB variations (MB, KB, B with number after, m with number)
     text = text.replace(/\bMB\b/gi, 'PB');
@@ -804,6 +820,7 @@ function extractNumbersFromOCR(text) {
     text = text.replace(/\bO(\d)/g, '0$1'); // "O" (letter) is often "0" (zero)
 
     // Fix concatenated numbers - split 4+ consecutive digits into pairs
+    // This mimics the Python pipeline's pairing of adjacent digits into 2-digit numbers
     text = text.replace(/(\d{4,})/g, (match) => {
         const digits = match.split('');
         const pairs = [];
@@ -862,6 +879,8 @@ function extractNumbersFromOCR(text) {
         }
 
         // Get white balls - take the 5 numbers immediately before the powerball
+        // Python pipeline takes the last 10 digits before PB marker, pairs them into 5 two-digit numbers
+        // Here we approximate this by taking 5 numbers before the powerball
         let whiteBalls;
         if (powerballIndex >= 5) {
             whiteBalls = validNums.slice(powerballIndex - 5, powerballIndex);
