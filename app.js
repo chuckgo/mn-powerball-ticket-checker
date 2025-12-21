@@ -14,10 +14,15 @@ const appState = {
     templatesLoaded: false
 };
 
-// Initialize app when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
+// Initialize app when DOM is loaded OR immediately if already loaded
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeApp();
+    });
+} else {
+    // DOM already loaded (script loaded dynamically)
     initializeApp();
-});
+}
 
 function initializeApp() {
     // Set up event listeners
