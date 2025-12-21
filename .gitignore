@@ -7,3 +7,13 @@ test-output.txt
 *.preprocessed.jpg
 *.traineddata
 opencv.js
+test-results.txt
+pipeline_output/
+pipeline_profile.json
+__pycache__/
+*.pyc
+*.HEIC
+*.heic
+*.jpg
+*.jpeg
+*.png
