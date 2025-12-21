@@ -851,8 +851,178 @@ async function processTicketImage() {
     }
 }
 
+function findQRCode(binaryMat) {
+    console.log('Detecting QR code...');
+
+    try {
+        const qrDetector = new cv.QRCodeDetector();
+        const points = new cv.Mat();
+
+        // Try detection on inverted binary
+        const binaryInverted = new cv.Mat();
+        cv.bitwise_not(binaryMat, binaryInverted);
+
+        const detectedData = qrDetector.detectAndDecode(binaryInverted, points);
+
+        if (points.rows > 0) {
+            // QR code found - extract corner points
+            const qrPoints = [];
+            for (let i = 0; i < 4; i++) {
+                qrPoints.push({
+                    x: points.floatAt(0, i * 2),
+                    y: points.floatAt(0, i * 2 + 1)
+                });
+            }
+
+            const qrTopY = Math.min(...qrPoints.map(p => p.y));
+            console.log(`✓ QR code detected at y=${Math.round(qrTopY)}`);
+
+            binaryInverted.delete();
+            points.delete();
+
+            return { found: true, points: qrPoints, topY: qrTopY };
+        }
+
+        binaryInverted.delete();
+        points.delete();
+        console.log('✗ QR code not detected');
+        return { found: false };
+
+    } catch (error) {
+        console.error('QR detection error:', error);
+        return { found: false };
+    }
+}
+
+function normalizeOrientation(binaryMat) {
+    console.log('Normalizing orientation...');
+
+    const qrInfo = findQRCode(binaryMat);
+
+    if (qrInfo.found) {
+        // Use QR code for homography
+        console.log('Using QR code for perspective transform');
+
+        const qrPoints = qrInfo.points;
+
+        // Order points: top-left, top-right, bottom-right, bottom-left
+        const sorted = [...qrPoints].sort((a, b) => a.y - b.y);
+        const top = sorted.slice(0, 2).sort((a, b) => a.x - b.x);
+        const bottom = sorted.slice(2, 4).sort((a, b) => a.x - b.x);
+        const ordered = [top[0], top[1], bottom[1], bottom[0]];
+
+        // Calculate QR code size and create destination points for upright orientation
+        const qrWidth = Math.hypot(ordered[1].x - ordered[0].x, ordered[1].y - ordered[0].y);
+        const qrHeight = Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y);
+        const qrSize = Math.round((qrWidth + qrHeight) / 2);
+
+        // Ticket dimensions based on QR code (from Python pipeline)
+        const ticketWidth = Math.round(qrSize * 10.8);
+        const ticketHeight = Math.round(qrSize * 10.8);
+
+        // Position QR code at bottom-right of canvas
+        const qrMargin = Math.round(qrSize * 0.2);
+        const qrDestX = ticketWidth - qrSize - qrMargin;
+        const qrDestY = ticketHeight - qrSize - qrMargin;
+
+        // Source and destination points for homography
+        const srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+            ordered[0].x, ordered[0].y,
+            ordered[1].x, ordered[1].y,
+            ordered[2].x, ordered[2].y,
+            ordered[3].x, ordered[3].y
+        ]);
+
+        const dstPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [
+            qrDestX, qrDestY,
+            qrDestX + qrSize, qrDestY,
+            qrDestX + qrSize, qrDestY + qrSize,
+            qrDestX, qrDestY + qrSize
+        ]);
+
+        // Calculate and apply homography
+        const H = cv.getPerspectiveTransform(srcPoints, dstPoints);
+        const normalized = new cv.Mat();
+        const dsize = new cv.Size(ticketWidth, ticketHeight);
+        cv.warpPerspective(binaryMat, normalized, H, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar(255, 255, 255, 255));
+
+        srcPoints.delete();
+        dstPoints.delete();
+        H.delete();
+
+        console.log(`Applied homography, normalized to ${ticketWidth}x${ticketHeight}`);
+        return { normalized, method: 'qr_homography', qrFound: true, qrTopY: qrDestY };
+    } else {
+        // Fallback: return original (could implement yellow strip detection here)
+        console.log('⚠ No QR code found, using original orientation');
+        const normalized = binaryMat.clone();
+        return { normalized, method: 'none', qrFound: false };
+    }
+}
+
+function findPlaysRegion(normalizedMat, qrInfo) {
+    console.log('Finding plays region...');
+
+    if (!qrInfo.qrFound) {
+        console.log('✗ Cannot find plays region without QR code');
+        return { found: false };
+    }
+
+    const qrTopY = qrInfo.qrTopY;
+
+    // Crop to region above QR code
+    const aboveQR = normalizedMat.roi(new cv.Rect(0, 0, normalizedMat.cols, qrTopY));
+    console.log(`Cropped to region above QR code: ${aboveQR.rows}px tall`);
+
+    // Find dashed line that separates header from plays
+    // Search in approximate range (58-72% of image height from top)
+    const searchStartY = Math.round(0.58 * aboveQR.rows);
+    const searchEndY = Math.round(0.72 * aboveQR.rows);
+    const searchRegion = aboveQR.roi(new cv.Rect(0, searchStartY, aboveQR.cols, searchEndY - searchStartY));
+
+    // Use horizontal projection to find sparse patterns (dashed lines)
+    const horizontalProj = new Array(searchRegion.rows).fill(0);
+    for (let y = 0; y < searchRegion.rows; y++) {
+        let whitePixels = 0;
+        for (let x = 0; x < searchRegion.cols; x++) {
+            if (searchRegion.ucharAt(y, x) > 128) {
+                whitePixels++;
+            }
+        }
+        horizontalProj[y] = whitePixels;
+    }
+
+    // Find line with moderate projection (dashed line characteristic)
+    const maxProj = Math.max(...horizontalProj);
+    let boundaryY = searchStartY;
+
+    for (let y = 0; y < horizontalProj.length; y++) {
+        const normalized = horizontalProj[y] / maxProj;
+        if (normalized > 0.3 && normalized < 0.7) {
+            boundaryY = searchStartY + y;
+            break;
+        }
+    }
+
+    console.log(`Found top boundary at y=${boundaryY}`);
+
+    // Crop to plays region (from boundary to QR code)
+    const topY = boundaryY + 10; // Small margin
+    const bottomY = qrTopY - 10;  // Small margin before QR
+
+    const playsRegion = normalizedMat.roi(new cv.Rect(0, topY, normalizedMat.cols, bottomY - topY));
+
+    searchRegion.delete();
+    aboveQR.delete();
+
+    console.log(`Cropped to plays region: ${playsRegion.rows}px tall (y=${topY} to y=${bottomY})`);
+
+    return { found: true, region: playsRegion, topY, bottomY };
+}
+
 function extractNumbersTemplateMatching(imageElement) {
     console.log('Using template matching extraction...');
+    console.log('='.repeat(60));
 
     if (!appState.templatesLoaded || typeof cv === 'undefined') {
         console.log('Templates not loaded, falling back to OCR');
@@ -860,7 +1030,8 @@ function extractNumbersTemplateMatching(imageElement) {
     }
 
     try {
-        // Step 1: Load and convert to grayscale
+        // Step 1: Load and apply Otsu's binarization
+        console.log('Step 1: Loading image and applying binarization...');
         const canvas = document.createElement('canvas');
         canvas.width = imageElement.naturalWidth || imageElement.width;
         canvas.height = imageElement.naturalHeight || imageElement.height;
@@ -871,44 +1042,61 @@ function extractNumbersTemplateMatching(imageElement) {
         const gray = new cv.Mat();
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-        // Step 2: Apply Otsu's binarization (matches Python pipeline)
         const binary = new cv.Mat();
         cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-        console.log('Applied Otsu binarization');
+        console.log('✓ Applied Otsu binarization');
 
-        // Step 3: Apply morphological closing to connect broken parts
+        // Step 2: Normalize orientation using QR code
+        console.log('\nStep 2: Normalizing orientation...');
+        const { normalized, method, qrFound, qrTopY } = normalizeOrientation(binary);
+        console.log(`✓ Normalization complete (method: ${method})`);
+
+        // Step 3: Find plays region
+        console.log('\nStep 3: Finding plays region...');
+        const regionInfo = findPlaysRegion(normalized, { qrFound, qrTopY });
+
+        if (!regionInfo.found) {
+            console.log('✗ Could not find plays region, using full image');
+            // Fall back to using full normalized image
+            regionInfo.region = normalized.clone();
+            regionInfo.found = true;
+        }
+
+        // Step 4: Apply morphological closing
+        console.log('\nStep 4: Applying morphological operations...');
         const kernel = cv.Mat.ones(3, 3, cv.CV_8U);
-        const binaryClosed = new cv.Mat();
-        cv.morphologyEx(binary, binaryClosed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
+        const playsProcessed = new cv.Mat();
+        cv.morphologyEx(regionInfo.region, playsProcessed, cv.MORPH_CLOSE, kernel, new cv.Point(-1, -1), 2);
+        console.log('✓ Applied morphological closing');
 
-        console.log(`Processing ${binary.rows}px tall image...`);
-
-        // Step 4: Find all PB markers
+        // Step 5: Extract plays using template matching
+        console.log('\nStep 5: Extracting plays with template matching...');
         console.log('Detecting PB markers...');
-        const pbMarkers = findPBMarkers(binaryClosed);
+        const pbMarkers = findPBMarkers(playsProcessed);
         console.log(`Found ${pbMarkers.length} PB markers`);
 
-        // Step 5: Detect ALL digits
         console.log('Detecting all digits...');
-        const allDigits = findAllDigits(binaryClosed);
+        const allDigits = findAllDigits(playsProcessed);
         console.log(`Matched ${allDigits.length} digits`);
 
-        // Step 6: Group digits by Y coordinate
         console.log('Grouping digits into rows...');
         const digitRows = groupDigitsByY(allDigits);
         console.log(`Grouped into ${digitRows.length} rows`);
 
-        // Step 7: Process each row to extract plays
+        console.log('Processing rows to extract plays...');
         const plays = extractPlaysFromRows(digitRows, pbMarkers, appState.pbTemplate);
 
         // Cleanup
         src.delete();
         gray.delete();
         binary.delete();
-        binaryClosed.delete();
+        normalized.delete();
+        if (regionInfo.region) regionInfo.region.delete();
+        playsProcessed.delete();
         kernel.delete();
 
-        console.log(`Total plays extracted: ${plays.length}`);
+        console.log(`\n✓ Total plays extracted: ${plays.length}`);
+        console.log('='.repeat(60));
         return plays;
 
     } catch (error) {
