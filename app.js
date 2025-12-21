@@ -863,36 +863,52 @@ function findQRCode(binaryMat) {
 
     try {
         const qrDetector = new cv.QRCodeDetector();
-        const points = new cv.Mat();
 
-        // Try detection on inverted binary
+        // Try multiple preprocessing approaches (matches Python pipeline)
         const binaryInverted = new cv.Mat();
         cv.bitwise_not(binaryMat, binaryInverted);
 
-        const detectedData = qrDetector.detectAndDecode(binaryInverted, points);
+        const contrast = new cv.Mat();
+        cv.equalizeHist(binaryInverted, contrast);
 
-        if (points.rows > 0) {
-            // QR code found - extract corner points
-            const qrPoints = [];
-            for (let i = 0; i < 4; i++) {
-                qrPoints.push({
-                    x: points.floatAt(0, i * 2),
-                    y: points.floatAt(0, i * 2 + 1)
-                });
+        const attempts = [
+            { name: 'binary', mat: binaryMat },
+            { name: 'binary_inverted', mat: binaryInverted },
+            { name: 'contrast', mat: contrast }
+        ];
+
+        for (const attempt of attempts) {
+            const points = new cv.Mat();
+            const detectedData = qrDetector.detectAndDecode(attempt.mat, points);
+
+            if (points.rows > 0) {
+                // QR code found - extract corner points
+                const qrPoints = [];
+                for (let i = 0; i < 4; i++) {
+                    qrPoints.push({
+                        x: points.floatAt(0, i * 2),
+                        y: points.floatAt(0, i * 2 + 1)
+                    });
+                }
+
+                const qrTopY = Math.min(...qrPoints.map(p => p.y));
+                console.log(`✓ QR code detected at y=${Math.round(qrTopY)} (using ${attempt.name} preprocessing)`);
+
+                points.delete();
+                binaryInverted.delete();
+                contrast.delete();
+
+                return { found: true, points: qrPoints, topY: qrTopY };
             }
 
-            const qrTopY = Math.min(...qrPoints.map(p => p.y));
-            console.log(`✓ QR code detected at y=${Math.round(qrTopY)}`);
-
-            binaryInverted.delete();
             points.delete();
-
-            return { found: true, points: qrPoints, topY: qrTopY };
         }
 
+        // Cleanup
         binaryInverted.delete();
-        points.delete();
-        console.log('✗ QR code not detected');
+        contrast.delete();
+
+        console.log('✗ QR code not detected (tried multiple preprocessing methods)');
         return { found: false };
 
     } catch (error) {
